@@ -1,0 +1,23 @@
+Google Application Utilities for Python
+=======================================
+
+This project is a small collection of utilities for building Python
+applications.  It includes some of the same set of utilities used to build and
+run internal Python apps at Google.
+
+Features:
+
+  * Simple application startup integrated with python-gflags.
+  * Subcommands for command-line applications.
+  * Option to drop into pdb on uncaught exceptions.
+  * Helper functions for dealing with files.
+  * High-level profiling tools.
+  * Timezeone-aware wrappers for datetime.datetime classes.
+  * Improved TestCase with the same methods as unittest2, plus helpful flags for
+    test startup.
+
+Installation
+============
+
+To install the package, simply run:
+  python setup.py install
