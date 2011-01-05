@@ -124,6 +124,24 @@ class TimestampUnitTest(basetest.TestCase):
           'FromString works for day %d since 2009-01-01' % day)
       startdate += datelib.datetime.timedelta(days=1)
 
+  def testFromString2(self):
+    """Test correctness of parsing the local time in a given timezone.
+
+    The result shall always be the same as tz.localize(naive_time).
+    """
+    baseday = datelib.datetime.date(2009, 1, 1).toordinal()
+    for day_offset in xrange(0, 365):
+      day = datelib.datetime.date.fromordinal(baseday + day_offset)
+      naive_day = datelib.datetime.datetime.combine(
+          day, datelib.datetime.time(0, 45, 9))
+
+      naive_day_str = naive_day.strftime('%Y-%m-%dT%H:%M:%S')
+
+      self.assertEqual(
+          datelib.US_PACIFIC.localize(naive_day),
+          datelib.Timestamp.FromString(naive_day_str, tz=datelib.US_PACIFIC),
+          'FromString localizes time incorrectly')
+
 
 if __name__ == '__main__':
   basetest.main()

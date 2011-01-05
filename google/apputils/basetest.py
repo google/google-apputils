@@ -21,6 +21,7 @@ tests.
 
 __author__ = 'dborowitz@google.com (Dave Borowitz)'
 
+import commands
 import difflib
 import getpass
 import os
@@ -225,7 +226,12 @@ class BeforeAfterTestCaseMeta(type):
       cls_tearDown(self)
 
       leaf = self.__class__
-      if leaf.__tests_to_run is not None and len(leaf.__tests_to_run) == 0:
+      # We need to make sure that tearDownTestCase is only run when
+      # we're executing this in the leaf class, so we need the
+      # explicit leaf == cls check below.
+      if (leaf.__tests_to_run is not None
+          and len(leaf.__tests_to_run) == 0
+          and leaf == cls):
         leaf.__tests_to_run = None
         self.tearDownTestCase()
 
@@ -577,6 +583,20 @@ class TestCase(unittest.TestCase):
       msg = '%s: %s; %s' % (msg, missing_msg, mismatched_msg)
     else:
       msg = '%s; %s' % (missing_msg, mismatched_msg)
+    self.fail(msg)
+
+  def assertContainsSubset(self, expected_subset, actual_set, msg=None):
+    """Checks whether actual iterable is a superset of expected iterable."""
+    missing = set(expected_subset) - set(actual_set)
+    if not missing:
+      return
+
+    missing_msg = 'Missing elements %s\nExpected: %s\nActual: %s' % (
+        missing, expected_subset, actual_set)
+    if msg:
+      msg += ': %s' % missing_msg
+    else:
+      msg = missing_msg
     self.fail(msg)
 
   def assertSameElements(self, expected_seq, actual_seq, msg=None):
@@ -963,6 +983,55 @@ def _SortedListDifference(expected, actual):
       unexpected.extend(actual[j:])
       break
   return missing, unexpected
+
+
+def _WriteTestData(data, filename):
+  """Write data into file named filename."""
+  fd = os.open(filename, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0600)
+  os.write(fd, data)
+  os.close(fd)
+
+
+class OutputDifferedError(AssertionError):
+  pass
+
+
+class DiffFailureError(Exception):
+  pass
+
+
+def _Diff(lhs, rhs):
+  """Run standard unix 'diff' against two files."""
+
+  cmd = '${TEST_DIFF:-diff} %s %s' % (commands.mkarg(lhs), commands.mkarg(rhs))
+  (status, output) = commands.getstatusoutput(cmd)
+  if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 1:
+    # diff outputs must be the same as c++ and shell
+    raise OutputDifferedError('\nRunning %s\n%s\nTest output differed '
+                              'from golden file\n' % (cmd, output))
+  elif not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+    raise DiffFailureError('\nRunning %s\n%s\nFailure diffing test output '
+                           'with golden file\n' % (cmd, output))
+
+
+def DiffTestStringFile(data, golden):
+  """Diff data agains a golden file."""
+  data_file = os.path.join(FLAGS.test_tmpdir, 'provided.dat')
+  _WriteTestData(data, data_file)
+  _Diff(data_file, golden)
+
+
+def DiffTestStrings(data1, data2):
+  """Diff two strings."""
+  data1_file = os.path.join(FLAGS.test_tmpdir, 'provided_1.dat')
+  _WriteTestData(data1, data1_file)
+  data2_file = os.path.join(FLAGS.test_tmpdir, 'provided_2.dat')
+  _WriteTestData(data2, data2_file)
+  _Diff(data1_file, data2_file)
+
+
+def DiffTestFiles(testgen, golden):
+  _Diff(testgen, golden)
 
 
 def GetCommandString(command):

@@ -8,6 +8,9 @@ In addition to the test modules under this package, we have a special TestCase
 that runs the tests that are shell scripts.
 """
 
+# TODO(dborowitz): It may be useful to generalize this and provide it to users
+# who want to run their own sh_tests.
+
 import os
 import subprocess
 import sys
@@ -41,3 +44,7 @@ class ShellScriptTests(basetest.TestCase):
 
   def testAppCommands(self):
     self.RunTestScript('appcommands_unittest.sh')
+
+
+if __name__ == '__main__':
+  basetest.main()

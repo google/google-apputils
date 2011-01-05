@@ -44,7 +44,7 @@ class Test1(appcommands.Cmd):
     """Output 'Command1' and flag info.
 
     Args:
-      argv: Remaining command line arguemnts after parsing flags and command
+      argv: Remaining command line arguments after parsing flags and command
 
     Returns:
       Value of flag fail1
@@ -71,7 +71,7 @@ class Test2(appcommands.Cmd):
     """Output 'Command2' and flag info.
 
     Args:
-      argv: Remaining command line arguemnts after parsing flags and command
+      argv: Remaining command line arguments after parsing flags and command
 
     Returns:
       Value of flag fail2

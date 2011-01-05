@@ -659,13 +659,14 @@ def Run():
   Returns:
     app.run()
   """
+  app.parse_flags_with_usage = ParseFlagsWithUsage
+  app.really_start = _CommandsStart
+  app.usage = _ReplacementAppUsage
   return app.run()
 
 
 # Always register 'help' command
 AddCmd('help', _CmdHelp)
-app.parse_flags_with_usage = ParseFlagsWithUsage
-app.really_start = _CommandsStart
 
 
 def _ReplacementAppUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
@@ -673,7 +674,6 @@ def _ReplacementAppUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
   AppcommandsUsage(shorthelp, writeto_stdout, detailed_error, exitcode=exitcode,
                    show_cmd=None, show_global_flags=True)
 
-app.usage = _ReplacementAppUsage
 
 if __name__ == '__main__':
   Run()

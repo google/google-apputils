@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# NB: this requires setuptools be installed.
+# Try sudo apt-get install python-setuptools
 from setuptools import setup, find_packages
+
+from google.apputils import setup_command
 
 REQUIRE = [
     "python-dateutil>=1.4",
@@ -23,13 +27,30 @@ REQUIRE = [
 
 setup(
     name = "google-apputils",
-    version = "0.1",
+    version = "0.2",
     packages = find_packages(exclude=["tests"]),
+    entry_points = {
+        "distutils.commands": [
+            "google_test = google.apputils.setup_command:GoogleTest",
+            ],
+
+        "distutils.setup_keywords": [
+            ("google_test_dir = google.apputils.setup_command"
+             ":ValidateGoogleTestDir"),
+            ],
+        },
 
     install_requires = REQUIRE,
-
-    test_suite = "tests",
     tests_require = REQUIRE + ["mox>=0.5"],
+
+    # The entry_points above allow other projects to understand the
+    # google_test command and test_dir option by specifying
+    # setup_requires("google-apputils"). However, those entry_points only get
+    # registered when this project is installed, and we need to run Google-style
+    # tests for this project before it is installed. So we need to manually set
+    # up the command and option mappings, for this project only.
+    cmdclass = {"google_test": setup_command.GoogleTest},
+    command_options = {"google_test": {"test_dir": ("setup.py", "tests")}},
 
     author = "Google Inc.",
     author_email="opensource@google.com",

@@ -232,6 +232,29 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
                       self.assertDictContainsSubset, {'a': 1, 'c': 1}, {'a': 1},
                       '.*Missing:.*Mismatched values:.*')
 
+  def testAssertContainsSubset(self):
+    # sets, lists, tuples, dicts all ok.  Types of set and subset do not have to
+    # match.
+    actual = ('a', 'b', 'c')
+    self.assertContainsSubset(set(('a', 'b')), actual)
+    self.assertContainsSubset(('b', 'c'), actual)
+    self.assertContainsSubset({'b': 1, 'c': 2}, list(actual))
+    self.assertContainsSubset(['c', 'a'], set(actual))
+    self.assertContainsSubset([], set())
+    self.assertContainsSubset([], {'a': 1})
+
+    self.assertRaises(AssertionError, self.assertContainsSubset, ('d',), actual)
+    self.assertRaises(AssertionError, self.assertContainsSubset, ['d'],
+                      set(actual))
+    self.assertRaises(AssertionError, self.assertContainsSubset, {'a': 1}, [])
+
+    self.assertRaisesWithRegexpMatch(AssertionError, 'Missing elements',
+                                     self.assertContainsSubset, set((1, 2, 3)),
+                                     set((1, 2)))
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, 'Custom message: Missing elements',
+        self.assertContainsSubset, set((1, 2)), set((1,)), 'Custom message')
+
   def testAssertAlmostEqual(self):
     if FLAGS.testid != 6:
       return
@@ -878,6 +901,26 @@ class GoogleTestBasePy24UnitTest(basetest.TestCase):
     self.assertSequenceEqual(expected_calls,
                              InheritanceSpyBaseClass.calls_made)
 
+  def testVerifyTearDownOrder(self):
+    """Verify that tearDownTestCase gets called at the correct time."""
+    TearDownOrderWatcherBaseClass.ClearLog()
+    self.RunTestCaseTests(TearDownOrderWatcherSubClass)
+
+    expected_calls = [
+        'TearDownOrderWatcherBaseClass.setUpTestCase',
+        'TearDownOrderWatcherSubClass.setUp Start',
+        'TearDownOrderWatcherBaseClass.setUp',
+        'TearDownOrderWatcherSubClass.setUp Finish',
+        'testAAAA',
+        'TearDownOrderWatcherSubClass.tearDown Start',
+        'TearDownOrderWatcherBaseClass.tearDown',
+        'TearDownOrderWatcherSubClass.tearDown Finish',
+        'TearDownOrderWatcherBaseClass.tearDownTestCase']
+
+    self.assertSequenceEqual(expected_calls,
+                             TearDownOrderWatcherBaseClass.calls_made)
+
+
 
 class StubPrefixedTestMethodsTestCase(basetest.TestCase):
 
@@ -1018,6 +1061,53 @@ class InheritanceSpySubClassB(InheritanceSpyBaseClass):
 
   def tearDownTestCase(self):
     self.Log('sub tearDownTestCase')
+
+
+# We define another pair of base/subclass here to verify that tearDown
+# and tearDownTestCase always happen in the correct order.
+class TearDownOrderWatcherBaseClass(basetest.TestCase):
+  __metaclass__ = basetest.BeforeAfterTestCaseMeta
+
+  calls_made = []
+
+  @staticmethod
+  def Log(call):
+    TearDownOrderWatcherBaseClass.calls_made.append(call)
+
+  @staticmethod
+  def ClearLog():
+    TearDownOrderWatcherBaseClass.calls_made = []
+
+  def __init__(self, *args, **kwds):
+    super(TearDownOrderWatcherBaseClass, self).__init__(*args, **kwds)
+
+  def setUpTestCase(self):
+    self.Log('TearDownOrderWatcherBaseClass.setUpTestCase')
+
+  def tearDownTestCase(self):
+    self.Log('TearDownOrderWatcherBaseClass.tearDownTestCase')
+
+  def setUp(self):
+    self.Log('TearDownOrderWatcherBaseClass.setUp')
+
+  def tearDown(self):
+    self.Log('TearDownOrderWatcherBaseClass.tearDown')
+
+
+class TearDownOrderWatcherSubClass(TearDownOrderWatcherBaseClass):
+  def setUp(self):
+    self.Log('TearDownOrderWatcherSubClass.setUp Start')
+    super(TearDownOrderWatcherSubClass, self).setUp()
+    self.Log('TearDownOrderWatcherSubClass.setUp Finish')
+
+  def tearDown(self):
+    self.Log('TearDownOrderWatcherSubClass.tearDown Start')
+    super(TearDownOrderWatcherSubClass, self).tearDown()
+    self.Log('TearDownOrderWatcherSubClass.tearDown Finish')
+
+  def testAAAA(self):
+    self.Log('testAAAA')
+    self.assertTrue(True)
 
 
 if __name__ == '__main__':

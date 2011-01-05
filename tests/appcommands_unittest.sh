@@ -21,15 +21,17 @@ function die {
 	exit 1
 }
 
-APP_PACKAGE="google.apputils"
+IMPORTS="from google.apputils import app
+from google.apputils import appcommands
+import gflags as flags"
 
 # This should exit with error code because no main defined
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 appcommands.Run()" >/dev/null 2>&1 && \
     die "Test 1 failed"
 
 # Standard use. This should exit successfully
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 import sys
 def test(argv):
   return 0
@@ -40,7 +42,7 @@ sys.exit(1)" test || \
     die "Test 2 failed"
 
 # Even with no return from Cmds Run() does not return
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 import sys
 def test(argv):
   return
@@ -51,7 +53,7 @@ sys.exit(1)" test || \
     die "Test 3 failed"
 
 # Standard use with returning an error code.
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 import sys
 def test(argv):
   return 1
@@ -62,7 +64,7 @@ sys.exit(0)" test && \
     die "Test 4 failed"
 
 # Executing two commands in single mode does not work (execute only first)
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test1(argv):
   return 0
 def test2(argv):
@@ -74,7 +76,7 @@ appcommands.Run()" test1 test2 || \
     die "Test 5 failed"
 
 # Registering a command twice does not work.
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test1(argv):
   return 0
 def main(argv):
@@ -84,8 +86,7 @@ appcommands.Run()" test >/dev/null 2>&1 && \
     die "Test 6 failed"
 
 # Executing help, returns non zero return code (1), then check result
-RES=`$PYTHON -c "from ${APP_PACKAGE} import appcommands
-import gflags
+RES=`$PYTHON -c "${IMPORTS}
 def test1(argv):
   '''Help1'''
   return 0
@@ -104,8 +105,7 @@ echo "${RES}" | grep -q -E "(^| )test1[ \t]+Help1($| )" || die "Test 10 failed"
 echo "${RES}" | grep -q -E "(^| )test2[ \t]+Help2($| )" || die "Test 11 failed"
 
 # Executing help for command, returns non zero return code (1), then check result
-RES=`$PYTHON -c "from ${APP_PACKAGE} import appcommands
-import gflags
+RES=`$PYTHON -c "${IMPORTS}
 def test1(argv):
   '''Help1'''
   return 0
@@ -123,21 +123,21 @@ echo "${RES}" | grep -q -E "(^| )test1[ \t]+" && die "Test 15 failed"
 echo "${RES}" | grep -q -E "(^| )test2[ \t]+Help2($| )" || die "Test 16 failed"
 
 # Returning False succeeds
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test(argv): return False
 def main(argv):
   appcommands.AddCmdFunc('test', test)
 appcommands.Run()" test || die "Test 17 failed"
 
 # Returning True fails
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test(argv): return True
 def main(argv):
   appcommands.AddCmdFunc('test', test)
 appcommands.Run()" test && die "Test 18 failed"
 
 # Registering using AddCmd instead of AddCmdFunc, should be the normal case
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 class test(appcommands.Cmd):
   def Run(self, argv): return 0
 def main(argv):
@@ -145,7 +145,7 @@ def main(argv):
 appcommands.Run()" test || die "Test 19 failed"
 
 # Registering using AddCmd instead of AddCmdFunc, now fail
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 class test(appcommands.Cmd):
   def Run(self, argv): return 1
 def main(argv):
@@ -211,7 +211,7 @@ $PYTHON $TEST --hint 'XYZ' help|grep -q "XYZ" && die "Test 44 failed"
 $PYTHON $TEST --hint 'XYZ' help|grep -q "This tool shows how" || die "Test 45 failed"
 
 # A command name with an letters, numbers, or an underscore is fine
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test(argv):
   return 0
 def main(argv):
@@ -221,7 +221,7 @@ def main(argv):
 appcommands.Run()" test || die "Test 46 failed"
 
 # A command name that starts with a non-alphanumeric characters is not ok
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test(argv):
   return 0
 def main(argv):
@@ -229,7 +229,7 @@ def main(argv):
 appcommands.Run()" 123 >/dev/null 2>&1 && die "Test 47 failed"
 
 # A command name that contains other characters is not ok
-$PYTHON -c "from ${APP_PACKAGE} import appcommands
+$PYTHON -c "${IMPORTS}
 def test(argv):
   return 0
 def main(argv):
@@ -237,8 +237,7 @@ def main(argv):
 appcommands.Run()" "test+1" >/dev/null 2>&1 && die "Test 48 failed"
 
 # If a command raises app.UsageError, usage is printed.
-RES=`$PYTHON -c "from ${APP_PACKAGE} import appcommands
-from ${APP_PACKAGE} import app
+RES=`$PYTHON -c "${IMPORTS}
 def test(argv):
   '''Help1'''
   raise app.UsageError('Ha-ha')

@@ -311,15 +311,63 @@ class BaseTimestamp(datetime.datetime):
     return result
 
 
+# Conversions from interval suffixes to number of seconds.
+# (m => 60s, d => 86400s, etc)
+_INTERVAL_CONV_DICT = {'s': 1}
+_INTERVAL_CONV_DICT['m'] = 60 * _INTERVAL_CONV_DICT['s']
+_INTERVAL_CONV_DICT['h'] = 60 * _INTERVAL_CONV_DICT['m']
+_INTERVAL_CONV_DICT['d'] = 24 * _INTERVAL_CONV_DICT['h']
+_INTERVAL_CONV_DICT['D'] = _INTERVAL_CONV_DICT['d']
+_INTERVAL_CONV_DICT['w'] = 7 * _INTERVAL_CONV_DICT['d']
+_INTERVAL_CONV_DICT['W'] = _INTERVAL_CONV_DICT['w']
+_INTERVAL_CONV_DICT['M'] = 30 * _INTERVAL_CONV_DICT['d']
+_INTERVAL_CONV_DICT['Y'] = 365 * _INTERVAL_CONV_DICT['d']
+_INTERVAL_REGEXP = re.compile('^([0-9]+)([%s])?' % ''.join(_INTERVAL_CONV_DICT))
+
+
+def ConvertIntervalToSeconds(interval):
+  """Convert a formatted string representing an interval into seconds.
+
+  Args:
+    interval: String to interpret as an interval.  A basic interval looks like
+      "<number><suffix>".  Complex intervals consisting of a chain of basic
+      intervals are also allowed.
+
+  Returns:
+    An integer representing the number of seconds represented by the interval
+    string, or None if the interval string could not be decoded.
+  """
+  total = 0
+  while interval:
+    match = _INTERVAL_REGEXP.match(interval)
+    if not match:
+      return None
+
+    try:
+      num = int(match.group(1))
+    except ValueError:
+      return None
+
+    suffix = match.group(2)
+    if suffix:
+      multiplier = _INTERVAL_CONV_DICT.get(suffix)
+      if not multiplier:
+        return None
+      num *= multiplier
+
+    total += num
+    interval = interval[match.end(0):]
+  return total
+
+
 class Timestamp(BaseTimestamp):
   """This subclass contains methods to parse W3C and interval date spec.
 
   The interval date specification is in the form "1D", where "D" can be
   "s"econds "m"inutes "h"ours "D"ays "W"eeks "M"onths "Y"ears.
   """
-  INTERVAL_CONV_DICT = {'s': 1, 'm': 60, 'h': 3600, 'D': 86400,
-                        'W': 7*86400, 'M': 30*86400, 'Y': 365*86400}
-  INTERVAL_REGEXP = re.compile('^([0-9]+)([smhDWMY])')
+  INTERVAL_CONV_DICT = _INTERVAL_CONV_DICT
+  INTERVAL_REGEXP = _INTERVAL_REGEXP
 
   @classmethod
   def _StringToTime(cls, timestring, tz=None):
@@ -333,15 +381,9 @@ class Timestamp(BaseTimestamp):
     Returns:
       New Timestamp.
     """
-
-    def _TimezoneWrapper(tzname, tzoffset):
-      if tzname:
-        return pytz.timezone(tzname)
-      if tzoffset is not None:
-        return pytz.FixedOffset(int(tzoffset / 60))
-      return tz or cls.LocalTimezone
-
-    r = parser.parse(timestring, tzinfos=_TimezoneWrapper)
+    r = parser.parse(timestring)
+    if not r.tzinfo:
+      r = (tz or cls.LocalTimezone).localize(r)
     result = cls(r.year, r.month, r.day, r.hour, r.minute, r.second,
                  r.microsecond, r.tzinfo)
 
@@ -350,16 +392,7 @@ class Timestamp(BaseTimestamp):
   @classmethod
   def _IntStringToInterval(cls, timestring):
     """Parse interval date specification and create a timedelta object."""
-    total = 0
-    while timestring:
-      match = cls.INTERVAL_REGEXP.match(timestring)
-
-      if not match: return
-      num, ext = int(match.group(1)), match.group(2)
-      if not ext in cls.INTERVAL_CONV_DICT or num < 0: return
-      total += num * cls.INTERVAL_CONV_DICT[ext]
-      timestring = timestring[match.end(0):]
-    return datetime.timedelta(seconds=total)
+    return datetime.timedelta(seconds=ConvertIntervalToSeconds(timestring))
 
   @classmethod
   def FromString(cls, value, tz=None):
