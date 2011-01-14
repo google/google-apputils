@@ -125,12 +125,11 @@ class GoogleTest(test.test):
     sys.modules['__main__'] = module
     sys.argv = [module.__file__] + self.test_args
 
-    print 'Running tests from %s' % module_path
-
     # Late import since this must be run with the project's sys.path.
     import basetest
     try:
       try:
+        sys.stderr.write('Testing %s\n' % module_name)
         basetest.main()
 
         # basetest.main() should always call sys.exit, so this is very bad.

@@ -19,6 +19,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 
 import os
 import re
+import sys
 import unittest
 
 import gflags as flags
@@ -30,6 +31,56 @@ flags.DEFINE_integer('testid', 0, 'Which test to run')
 
 
 class GoogleTestBaseUnitTest(basetest.TestCase):
+  def testCapturing(self):
+    basetest.CaptureTestStdout()
+    basetest.CaptureTestStderr()
+    # print two lines to stdout
+    sys.stdout.write('This goes to captured.out\n')
+    sys.stdout.write('This goes to captured.out\n')
+    sys.stderr.write('This goes to captured.err\n')
+
+    stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
+    stdout_file = open(stdout_filename, 'wb')
+    stdout_file.write('This goes to captured.out\n'
+                      'This goes to captured.out\n')
+    stdout_file.close()
+    basetest.DiffTestStdout(stdout_filename)
+
+    # After DiffTestStdout(), the standard output is no longer captured
+    # and is written to the screen. Standard error is still captured.
+    sys.stdout.write('This goes to stdout screen 1/2\n')
+    sys.stderr.write('This goes to captured.err\n')
+
+    # After CaptureTestStdout(), both standard output and standard error
+    # are captured.
+    basetest.CaptureTestStdout()
+    sys.stdout.write('This goes to captured.out\n')
+    sys.stderr.write('This goes to captured.err\n')
+
+    stderr_filename = os.path.join(FLAGS.test_tmpdir, 'stderr.diff')
+    stderr_file = open(stderr_filename, 'wb')
+    stderr_file.write('This goes to captured.err\n'
+                      'This goes to captured.err\n'
+                      'This goes to captured.err\n')
+    stderr_file.close()
+
+    # After DiffTestStderr(), the standard error is no longer captured and
+    # is written to the screen. Standard output is still captured.
+    basetest.DiffTestStderr(stderr_filename)
+    sys.stdout.write('This goes to captured.out\n')
+    sys.stderr.write('This goes to stderr screen 2/2\n')
+
+    basetest.DiffTestStdout(stdout_filename)
+
+    basetest.CaptureTestStdout()
+    sys.stdout.write('Correct Output\n')
+    stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
+    stdout_file = open(stdout_filename, 'wb')
+    stdout_file.write('Incorrect Output\n')
+    stdout_file.close()
+    self.assertRaises(basetest.OutputDifferedError, basetest.DiffTestStdout,
+                      stdout_filename)
+
 
   def testFlags(self):
     if FLAGS.testid == 1:

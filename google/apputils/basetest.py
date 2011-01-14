@@ -985,6 +985,139 @@ def _SortedListDifference(expected, actual):
   return missing, unexpected
 
 
+# ----------------------------------------------------------------------
+# Functions to compare the actual output of a test to the expected
+# (golden) output.
+#
+# Note: We could just replace the sys.stdout and sys.stderr objects,
+# but we actually redirect the underlying file objects so that if the
+# Python script execs any subprocess, their output will also be
+# redirected.
+#
+# Usage:
+#   basetest.CaptureTestStdout()
+#   ... do something ...
+#   basetest.DiffTestStdout("... path to golden file ...")
+# ----------------------------------------------------------------------
+
+
+class CapturedStream(object):
+  """A temporarily redirected output stream."""
+
+  def __init__(self, stream, filename):
+    self._stream = stream
+    self._fd = stream.fileno()
+    self._filename = filename
+
+    # Keep original stream for later
+    self._uncaptured_fd = os.dup(self._fd)
+
+    # Open file to save stream to
+    cap_fd = os.open(self._filename,
+                     os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+                     0600)
+
+    # Send stream to this file
+    self._stream.flush()
+    os.dup2(cap_fd, self._fd)
+    os.close(cap_fd)
+
+  def RestartCapture(self):
+    """Resume capturing output to a file (after calling StopCapture)."""
+    # Original stream fd
+    assert self._uncaptured_fd
+
+    # Append stream to file
+    cap_fd = os.open(self._filename,
+                     os.O_CREAT | os.O_APPEND | os.O_WRONLY,
+                     0600)
+
+    # Send stream to this file
+    self._stream.flush()
+    os.dup2(cap_fd, self._fd)
+    os.close(cap_fd)
+
+  def StopCapture(self):
+    """Remove output redirection."""
+    self._stream.flush()
+    os.dup2(self._uncaptured_fd, self._fd)
+
+  def filename(self):
+    return self._filename
+
+  def __del__(self):
+    self.StopCapture()
+    os.close(self._uncaptured_fd)
+    del self._uncaptured_fd
+
+
+_captured_streams = {}
+
+
+def _CaptureTestOutput(stream, filename):
+  """Redirect an output stream to a file.
+
+  Args:
+    stream: Should be sys.stdout or sys.stderr.
+    filename: File where output should be stored.
+  """
+  assert not _captured_streams.has_key(stream)
+  _captured_streams[stream] = CapturedStream(stream, filename)
+
+
+def _DiffTestOutput(stream, golden_filename):
+  """Compare ouput of redirected stream to contents of golden file.
+
+  Args:
+    stream: Should be sys.stdout or sys.stderr.
+    golden_filename: Absolute path to golden file.
+  """
+  assert _captured_streams.has_key(stream)
+  cap = _captured_streams[stream]
+
+  for cap_stream in _captured_streams.itervalues():
+    cap_stream.StopCapture()
+
+  try:
+    _Diff(cap.filename(), golden_filename)
+  finally:
+    # remove the current stream
+    del _captured_streams[stream]
+    # restore other stream capture
+    for cap_stream in _captured_streams.itervalues():
+      cap_stream.RestartCapture()
+
+
+# Public interface
+def CaptureTestStdout(outfile=None):
+  if not outfile:
+    outfile = os.path.join(FLAGS.test_tmpdir, 'captured.out')
+
+  _CaptureTestOutput(sys.stdout, outfile)
+
+
+def CaptureTestStderr(outfile=None):
+  if not outfile:
+    outfile = os.path.join(FLAGS.test_tmpdir, 'captured.err')
+
+  _CaptureTestOutput(sys.stderr, outfile)
+
+
+def DiffTestStdout(golden):
+  _DiffTestOutput(sys.stdout, golden)
+
+
+def DiffTestStderr(golden):
+  _DiffTestOutput(sys.stderr, golden)
+
+
+def StopCapturing():
+  while _captured_streams:
+    _, cap_stream = _captured_streams.popitem()
+    cap_stream.StopCapture()
+    del cap_stream
+
+
 def _WriteTestData(data, filename):
   """Write data into file named filename."""
   fd = os.open(filename, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0600)
@@ -1122,9 +1255,9 @@ def main(*args, **keys):
     os.makedirs(FLAGS.test_tmpdir)
 
   # Run main module setup, if it exists
-  main = sys.modules['__main__']
-  if hasattr(main, 'setUp') and callable(main.setUp):
-    main.setUp()
+  main_mod = sys.modules['__main__']
+  if hasattr(main_mod, 'setUp') and callable(main_mod.setUp):
+    main_mod.setUp()
 
   # Set sys.argv so the unittest module can do its own parsing
   sys.argv = argv
@@ -1140,7 +1273,7 @@ def main(*args, **keys):
     result = test_program.testRunner.run(test_program.test)
   finally:
     # Run main module teardown, if it exists
-    if hasattr(main, 'tearDown') and callable(main.tearDown):
-      main.tearDown()
+    if hasattr(main_mod, 'tearDown') and callable(main_mod.tearDown):
+      main_mod.tearDown()
 
   sys.exit(not result.wasSuccessful())
