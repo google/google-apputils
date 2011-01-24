@@ -631,10 +631,17 @@ class TestCase(unittest.TestCase):
     assert isinstance(second, types.StringTypes), (
         'Second argument is not a string: %r' % second)
 
-    if first != second:
-      raise self.failureException(
-          msg or '\n' + ''.join(difflib.ndiff(first.splitlines(True),
-                                              second.splitlines(True))))
+    if first == second:
+      return
+    if msg:
+      raise self.failureException(msg)
+
+    failure_message = ['\n']
+    for line in difflib.ndiff(first.splitlines(True), second.splitlines(True)):
+      failure_message.append(line)
+      if not line.endswith('\n'):
+        failure_message.append('\n')
+    raise self.failureException(''.join(failure_message))
 
   def assertLess(self, a, b, msg=None):
     """Just like self.assert_(a < b), but with a nicer default message."""
@@ -663,10 +670,22 @@ class TestCase(unittest.TestCase):
   # TODO(user): Maybe add a assertWithinTolerance(a, b, t) to
   # check (b - t) <= a <= (b + t), if it's needed by more people than just me
 
+  def assertIs(self, a, b, msg=None):
+    """Just like self.assert_(a is b), but with a nicer default message."""
+    if msg is None:
+      msg = '"%r" unexpectedly not identical to "%r"' % (a, b)
+    self.assert_(a is b, msg)
+
+  def assertIsNot(self, a, b, msg=None):
+    """Just like self.assert_(a is not b), but with a nicer default message."""
+    if msg is None:
+      msg = '"%r" unexpectedly identical to "%r"' % (a, b)
+    self.assert_(a is not b, msg)
+
   def assertIsNone(self, obj, msg=None):
     """Just like self.assert_(obj is None), but with a nicer default message."""
     if msg is None:
-      msg = '"%s" unexpectedly not None' % obj
+      msg = '"%r" unexpectedly not None' % obj
     self.assert_(obj is None, msg)
 
   def assertIsNotNone(self, obj, msg='unexpectedly None'):

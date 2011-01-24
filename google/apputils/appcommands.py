@@ -15,23 +15,23 @@
 
 """This module is the base for programs that provide multiple commands.
 
-This provides command line tools that have a few shared global flags
-followed by a command name followed by command specific flags and
-arguments. That is:
+This provides command line tools that have a few shared global flags,
+followed by a command name, followed by command specific flags,
+then by arguments. That is:
   tool [--global_flags] command [--command_flags] [args]
 
-The module is built on top of app.py and 'overrides' a bit of it. Yet
+The module is built on top of app.py and 'overrides' a bit of it. However
 the interface is mostly the same. The main difference is that your main
 is supposed to register commands and return without further execution
-of the commands. Though pre checking is of course welcome. Also your
+of the commands; pre checking is of course welcome! Also your
 global initialization should call appcommands.Run() rather than app.run().
 
-To register commands use AddCmd() or AddCmdFunc(). Where the former is used
-for commands that derive from class Cmd and the latter is used to wrap simple
-functions.
+To register commands use AddCmd() or AddCmdFunc().  AddCmd() is used
+for commands that derive from class Cmd and the AddCmdFunc() is used
+to wrap simple functions.
 
-This module itself registers the command 'help' that allows to retrieve help
-for all or specific commands.
+This module itself registers the command 'help' that allows users
+to retrieve help for all or specific commands.
 
 Example:
 
@@ -74,31 +74,32 @@ and register your commands in main() to initialize your program with appcommands
 
 Handling of flags:
   Flags can be registered just as with any other google tool using flags.py.
-  But you can also provide command specific flags. To do so simply add a
+  In addition you can also provide command specific flags. To do so simply add
   flags registering code into the __init__ function of your Cmd classes passing
   parameter flag_values to any flags registering calls. These flags will get
-  copied to the global flag list so that once the command is detected they
+  copied to the global flag list, so that once the command is detected they
   behave just like any other flag. That means these flags won't be available
   for other commands. Note that it is possible to register flags with more
   than one command.
 
 Getting help:
-  This module activates formatting and wrapping to help output. That is the
-  main difference to help created from app.py. So just as app.py appcommands.py
-  will create help from the main modules main __doc__. But it adds the new
-  'help' command that allows to get a list of all available commands.
-  Each commands help will be followed by the registered command specific flags
-  along with their defaults and help. After help for all commands there will
-  also be a list of all registered global flags with their defaults and help.
+  This module activates formatting and wrapping to help output. That is
+  the main difference to help created from app.py. So just as with app.py,
+  appcommands.py will create help from the main modules main __doc__.
+  But it adds the new 'help' command that allows you to get a list of
+  all available commands.  Each command's help will be followed by the
+  registered command specific flags along with their defaults and help.
+  After help for all commands there will also be a list of all registered
+  global flags with their defaults and help.
 
-  The text for the commands help can best be supplied by overwriting the
+  The text for the command's help can best be supplied by overwriting the
   __doc__ property of the Cmd classes for commands registered with AddCmd() or
   the __doc__ property of command functions registered AddCmdFunc().
 
 Inner working:
   This module interacts with app.py by replacing its inner start dispatcher.
   The replacement version basically does the same, registering help flags,
-  checking whether help falgs were present and calling the main modules main
+  checking whether help flags were present, and calling the main module's main
   function. However unlike app.py, this module epxpects main() to only register
   commands and then to return. After having all commands registered
   appcommands.py will then parse the remaining arguments for any registered
@@ -138,7 +139,7 @@ def GetAppBasename():
 
 
 def ShortHelpAndExit(message=None):
-  """Display optional message followed by a note on how to get help then exit.
+  """Display optional message, followed by a note on how to get help, then exit.
 
   Args:
     message: optional message to display
@@ -184,8 +185,8 @@ class Cmd(object):
 
   When creating code for a command, at least you have to derive this class
   and override method Run(). The other methods of this class might be
-  overridden as well. Check their documentation for details. If the the command
-  need any specific flags, use __init__ for registration.
+  overridden as well. Check their documentation for details. If the command
+  needs any specific flags, use __init__ for registration.
   """
 
   def __init__(self, name, flag_values):
@@ -196,7 +197,7 @@ class Cmd(object):
     parameter to any flags.DEFINE_*() call.
 
     Args:
-      name:        Nameof command
+      name:        Name of the command
       flag_values: FlagValues() instance that needs to be passed as flag_values
                    parameter to any flags registering call.
     Raises:
@@ -211,7 +212,7 @@ class Cmd(object):
     """Execute the command. Must be provided by the implementing class.
 
     Args:
-      argv: Remaining command line arguemnts after parsing flags and command
+      argv: Remaining command line arguments after parsing flags and command
             (that is a copy of sys.argv at the time of the function call with
             all parsed flags removed).
 
@@ -273,7 +274,7 @@ class Cmd(object):
     """Get help string for command.
 
     Args:
-      argv: Remaining command line flags and arguemnts after parsing command
+      argv: Remaining command line flags and arguments after parsing command
             (that is a copy of sys.argv at the time of the function call with
             all parsed flags removed); unused in this default implementation,
             but may be used in subclasses.
@@ -313,7 +314,7 @@ class _FunctionalCmd(Cmd):
     """Get help for command.
 
     Args:
-      argv: Remaining command line flags and arguemnts after parsing command
+      argv: Remaining command line flags and arguments after parsing command
             (that is a copy of sys.argv at the time of the function call with
             all parsed flags removed); unused in this implementation.
 
@@ -330,7 +331,7 @@ class _FunctionalCmd(Cmd):
     """Execute the command with given arguments.
 
     Args:
-      argv: Remaining command line flags and arguemnts after parsing command
+      argv: Remaining command line flags and arguments after parsing command
             (that is a copy of sys.argv at the time of the function call with
             all parsed flags removed).
 
@@ -413,10 +414,10 @@ class _CmdHelp(Cmd):
   def Run(self, argv):
     """Execute help command.
 
-    If an argument is given and that argument is a registered command name,
-    help specific to that command is being displayed. If the command is unknown
-    a fatal error will be displayed. If no argument is present then help for
-    all commands will be presented.
+    If an argument is given and that argument is a registered command
+    name, then help specific to that command is being displayed.
+    If the command is unknown then a fatal error will be displayed. If
+    no argument is present then help for all commands will be presented.
 
     If a specific command help is being generated, the list of commands is
     temporarily replaced with one containing only that command. Thus the call
@@ -424,7 +425,7 @@ class _CmdHelp(Cmd):
     will show help for all registered commands as it sees all commands.
 
     Args:
-      argv: Remaining command line flags and arguemnts after parsing command
+      argv: Remaining command line flags and arguments after parsing command
             (that is a copy of sys.argv at the time of the function call with
             all parsed flags removed).
             So argv[0] is the program and argv[1] will be the first argument to
@@ -493,7 +494,7 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
 
   Extracts the __doc__ string from the __main__ module and writes it to
   stderr. If that string contains a '%s' then that is replaced by the command
-  pathname. Otherwise a default usgae string is being generated.
+  pathname. Otherwise a default usage string is being generated.
 
   The output varies depending on the following:
   - FLAGS.help
@@ -504,7 +505,7 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
   Args:
     shorthelp:      print only command and main module flags, rather than all.
     writeto_stdout: write help message to stdout, rather than to stderr.
-    detailed_error: additional detail about why usage info was presented.
+    detailed_error: additional details about why usage info was presented.
     exitcode:       if set, exit with this status code after writing help.
     show_cmd:       show help for this command only (name of command).
     show_global_flags: show help for global flags.

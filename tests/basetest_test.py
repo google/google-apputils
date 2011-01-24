@@ -511,17 +511,94 @@ test case
 
     for type1 in (str, unicode):
       for type2 in (str, unicode):
-        try:
-          self.assertMultiLineEqual(type1(sample_text),
-                                    type2(revised_sample_text))
-        except AssertionError, e:
-          self.assertEqual(sample_text_error, str(e))
+        self.AssertRaisesWithMatch(AssertionError, sample_text_error,
+                                   self.assertMultiLineEqual,
+                                   type1(sample_text),
+                                   type2(revised_sample_text))
+
+  # TODO(user): Move into basetest.py.
+  def AssertRaisesWithMatch(self, expected_exception,
+                            expected_exception_message, callable_obj, *args,
+                            **kwargs):
+    """Asserts that the message in a raised exception equals the given string.
+
+    Unlike assertRaisesWithRegexpMatch this method takes a literal string, not
+    a regular expression.
+
+    Args:
+      expected_exception: Exception class expected to be raised.
+      expected_exception_message: String message expected in the raised
+        exception.  For a raise exception e, expected_exception_message must
+        equal str(e).
+      callable_obj: Function to be called.
+      args: Extra args.
+      kwargs: Extra kwargs.
+    """
+    try:
+      callable_obj(*args, **kwargs)
+    except expected_exception, err:
+      actual_exception_message = str(err)
+      self.assert_('Exception message does not match.\n'
+                   'Expected: %s\n'
+                   'Actual: %s' % (expected_exception_message,
+                                   actual_exception_message))
+    else:
+      self.fail(expected_exception.__name__ + ' not raised')
+
+  def testAssertMultiLineEqualAddsNewlinesIfNeeded(self):
+    self.AssertRaisesWithMatch(
+        AssertionError,
+        '\n'
+        '  line1\n'
+        '- line2\n'
+        '?     ^\n'
+        '+ line3\n'
+        '?     ^\n',
+        self.assertMultiLineEqual,
+        'line1\n'
+        'line2',
+        'line1\n'
+        'line3')
+
+  def testAssertMultiLineEqualShowsMissingNewlines(self):
+    self.AssertRaisesWithMatch(
+        AssertionError,
+        '\n'
+        '  line1\n'
+        '- line2\n'
+        '?      -\n'
+        '+ line2\n',
+        self.assertMultiLineEqual,
+        'line1\n'
+        'line2\n',
+        'line1\n'
+        'line2')
+
+  def testAssertMultiLineEqualShowsExtraNewlines(self):
+    self.AssertRaisesWithMatch(
+        AssertionError,
+        '\n'
+        '  line1\n'
+        '- line2\n'
+        '+ line2\n'
+        '?       +\n',
+        self.assertMultiLineEqual,
+        'line1\n'
+        'line2',
+        'line1\n',
+        'line2\n')
 
   def testAssertIsNone(self):
     self.assertIsNone(None)
     self.assertRaises(AssertionError, self.assertIsNone, False)
     self.assertIsNotNone('Google')
     self.assertRaises(AssertionError, self.assertIsNotNone, None)
+
+  def testAssertIs(self):
+    self.assertIs(object, object)
+    self.assertRaises(AssertionError, self.assertIsNot, object, object)
+    self.assertIsNot(True, False)
+    self.assertRaises(AssertionError, self.assertIs, True, False)
 
   def testAssertBetween(self):
     self.assertBetween(3.14, 3.1, 3.141)
