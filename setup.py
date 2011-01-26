@@ -21,7 +21,7 @@ from google.apputils import setup_command
 
 REQUIRE = [
     "python-dateutil>=1.4",
-    "python-gflags>=1.3",
+    "python-gflags==1.4",
     "pytz>=2010",
     ]
 

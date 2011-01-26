@@ -59,7 +59,7 @@ from setuptools.command import test
 def ValidateGoogleTestDir(unused_dist, unused_attr, value):
   """Validate that the test directory is a directory."""
   if not os.path.isdir(value):
-    raise errors.DistutilsSetupError('%s is not a directory: %r' % value)
+    raise errors.DistutilsSetupError('%s is not a directory' % value)
 
 
 class GoogleTest(test.test):
