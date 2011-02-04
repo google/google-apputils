@@ -106,22 +106,52 @@ class StopWatch(object):
     if timer not in self.timers:
       raise RuntimeError(
           'Tried to stop timer that was never started: %s' % timer)
-    now = time.time()
-    self.accum[timer] = self.accum.get(timer, 0.0) + (now - self.timers[timer])
+    self.accum[timer] = self.timervalue(timer)
     del self.timers[timer]
     for stopped in self.stopped.get(timer, []):
       self.start(stopped, stop_others=0)
 
-  def overhead(self):
+  def timervalue(self, timer='total', now=None):
+    """Return the value seen by this timer so far.
+
+    If the timer is stopped, this will be the accumulated time it has seen.
+    If the timer is running, this will be the time it has seen up to now.
+    If the timer has never been started, this will be zero.
+
+    Args:
+      timer: str; the name of the timer to report on.
+      now: long; if provided, the time to use for 'now' for running timers.
+    """
+    if not now:
+      now = time.time()
+
+    if timer in self.timers:
+      # Timer is running now.
+      return self.accum.get(timer, 0.0) + (now - self.timers[timer])
+    elif timer in self.accum:
+      # Timer is stopped.
+      return self.accum[timer]
+    else:
+      # Timer is never started.
+      return 0.0
+
+  def overhead(self, now=None):
     """Calculate the overhead.
+
+    Args:
+      now: (optional) time to use as the current time.
 
     Returns:
       The overhead, that is, time spent in total but not in any sub timer.  This
       may be negative if time was counted in two sub timers.  Avoid this by
       always using stop_others.
     """
-    all = reduce(lambda x, y: x+y, self.accum.values(), 0.0)
-    return self.accum['total'] - (all - self.accum['total'])
+    total = self.timervalue('total', now)
+    if total == 0.0:
+      return 0.0
+
+    all_timers = reduce(lambda x, y: x+y, self.accum.values(), 0.0)
+    return total - (all_timers - total)
 
   def results(self, verbose=False):
     """Get the results of this stopwatch.
@@ -131,19 +161,26 @@ class StopWatch(object):
 
     Returns:
       A list of tuples showing the output of this stopwatch, of the form
-      (name, value, num_starts) for each timer.
+      (name, value, num_starts) for each timer.  Note that if the total timer
+      is not used, non-verbose results will be the empty list.
     """
-    self.accum['overhead'] = self.overhead()
+    now = time.time()
+
+    self.accum['overhead'] = self.overhead(now=now)
     self.counters['overhead'] = 1
     all_names = self.accum.keys()
     names = []
 
-    all_names.remove('total')
+    if 'total' in all_names:
+      all_names.remove('total')
     all_names.sort()
     if verbose:
       names = all_names
-    names.append('total')
-    results = [(name, self.accum[name], self.counters[name]) for name in names]
+    if 'total' in self.accum or 'total' in self.timers:
+      names.append('total')
+
+    results = [(name, self.timervalue(name, now=now), self.counters[name])
+               for name in names]
     return results
 
   def dump(self, verbose=False):

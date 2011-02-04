@@ -176,6 +176,7 @@ class BeforeAfterTestCaseMeta(type):
     # setUpTestCase (looking for the __tests_to_run==None flag), and then runs
     # the original setUp method.
     def setUp(self):
+      """Function that will encapsulate and replace cls.setUp()."""
       # This line is unassuming but crucial to making this whole system work.
       # It sets leaf to the class of the instance we're currently testing.  That
       # is, leaf is going to be a leaf class.  It's not necessarily the same
@@ -223,6 +224,7 @@ class BeforeAfterTestCaseMeta(type):
     cls_tearDown = cls.tearDown
 
     def tearDown(self):
+      """Function that will encapsulate and replace cls.tearDown()."""
       cls_tearDown(self)
 
       leaf = self.__class__
@@ -230,7 +232,7 @@ class BeforeAfterTestCaseMeta(type):
       # we're executing this in the leaf class, so we need the
       # explicit leaf == cls check below.
       if (leaf.__tests_to_run is not None
-          and len(leaf.__tests_to_run) == 0
+          and not leaf.__tests_to_run
           and leaf == cls):
         leaf.__tests_to_run = None
         self.tearDownTestCase()
@@ -294,6 +296,9 @@ class TestCase(unittest.TestCase):
     This method overrides unittest.TestCase.shortDescription(), which
     only returns the first line of the docstring, obscuring the name
     of the test upon failure.
+
+    Returns:
+      desc: A short description of a test method.
     """
     desc = str(self)
     # NOTE: super() is used here instead of directly invoking
@@ -395,7 +400,7 @@ class TestCase(unittest.TestCase):
       seq_type: The expected datatype of the sequences, or None if no datatype
           should be enforced.
     """
-    if seq_type != None:
+    if seq_type is not None:
       seq_type_name = seq_type.__name__
       assert isinstance(seq1, seq_type), ('First sequence is not a %s: %r' %
                                           (seq_type_name, seq1))
@@ -467,6 +472,46 @@ class TestCase(unittest.TestCase):
       msg = '\n'.join(difflib.ndiff(pprint.pformat(seq1).splitlines(),
                                     pprint.pformat(seq2).splitlines()))
     self.fail(differing + msg)
+
+  def assertSequenceStartsWith(self, prefix, whole, msg=None):
+    """An equality assertion for the beginning of ordered sequences.
+
+    If prefix is an empty sequence, it will raise an error unless whole is also
+    an empty sequence.
+
+    If prefix is not a sequence, it will raise an error if the first element of
+    whole does not match.
+
+    Args:
+      prefix: A sequence expected at the beginning of the whole parameter.
+      whole: The sequence in which to look for prefix.
+      msg: Optional message to append on failure.
+    """
+    try:
+      prefix_len = len(prefix)
+    except (TypeError, NotImplementedError):
+      prefix = [prefix]
+      prefix_len = 1
+
+    try:
+      whole_len = len(whole)
+    except (TypeError, NotImplementedError):
+      self.fail('For whole: len(%s) is not supported, it appears to be type: '
+                '%s' % (whole, type(whole)))
+
+    assert prefix_len <= whole_len, (
+        'Prefix length (%d) is longer than whole length (%d).' %
+        (prefix_len, whole_len))
+
+    if not prefix_len and whole_len:
+      self.fail('Prefix length is 0 but whole length is %d: %s' %
+                (len(whole), whole))
+
+    try:
+      self.assertSequenceEqual(prefix, whole[:prefix_len], msg)
+    except AssertionError:
+      self.fail(msg or 'prefix: %s not found at start of whole: %s.' %
+                (prefix, whole))
 
   def assertListEqual(self, list1, list2, msg=None):
     """A list-specific equality assertion.
@@ -545,6 +590,7 @@ class TestCase(unittest.TestCase):
     self.assert_(a not in b, msg)
 
   def assertDictEqual(self, d1, d2, msg=None):
+    """Checks whether d1 and d2 contain the same key/value pairs."""
     assert isinstance(d1, dict), 'First argument is not a dict: %r' % d1
     assert isinstance(d2, dict), 'Second argument is not a dict: %r' % d2
 

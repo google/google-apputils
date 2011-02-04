@@ -16,14 +16,28 @@
 # NB: this requires setuptools be installed.
 # Try sudo apt-get install python-setuptools
 from setuptools import setup, find_packages
-
-from google.apputils import setup_command
+from setuptools.command import test
 
 REQUIRE = [
     "python-dateutil>=1.4",
     "python-gflags==1.4",
     "pytz>=2010",
     ]
+
+
+# Mild hackery to get around the fact that we want to include a
+# GoogleTest as one of the cmdclasses for our package, but we
+# can't reference it until our package is installed. We simply
+# make a wrapper class that actually creates objects of the
+# appropriate class at runtime.
+class GoogleTestWrapper(test.test):
+  test_dir = None
+
+  def __new__(cls, *args, **kwds):
+    from google.apputils import setup_command
+    dist = setup_command.GoogleTest(*args, **kwds)
+    dist.test_dir = GoogleTestWrapper.test_dir
+    return dist
 
 setup(
     name = "google-apputils",
@@ -48,8 +62,9 @@ setup(
     # setup_requires("google-apputils"). However, those entry_points only get
     # registered when this project is installed, and we need to run Google-style
     # tests for this project before it is installed. So we need to manually set
-    # up the command and option mappings, for this project only.
-    cmdclass = {"google_test": setup_command.GoogleTest},
+    # up the command and option mappings, for this project only, and we use
+    # a wrapper class that exists before the install happens.
+    cmdclass = {"google_test": GoogleTestWrapper},
     command_options = {"google_test": {"test_dir": ("setup.py", "tests")}},
 
     author = "Google Inc.",

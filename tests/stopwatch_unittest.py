@@ -133,5 +133,30 @@ class StopwatchUnitTest(basetest.TestCase):
     self.assertRaises(RuntimeError, sw.stop)
     self.assertRaises(RuntimeError, sw.stop, 'foo')
 
+  def testResultsDoesntCrashWhenUnstarted(self):
+    sw = stopwatch.StopWatch()
+    sw.results()
+
+  def testResultsDoesntCrashWhenUnstopped(self):
+    sw = stopwatch.StopWatch()
+    sw.start()
+    sw.results()
+
+  def testTimerValue(self):
+    sw = stopwatch.StopWatch()
+    self.assertAlmostEqual(0, sw.timervalue('a'), 2)
+    sw.start('a')
+    self.assertAlmostEqual(0, sw.timervalue('a'), 2)
+    self.time.sleep(1)
+    self.assertAlmostEqual(1, sw.timervalue('a'), 2)
+    sw.stop('a')
+    self.assertAlmostEqual(1, sw.timervalue('a'), 2)
+    sw.start('a')
+    self.time.sleep(1)
+    self.assertAlmostEqual(2, sw.timervalue('a'), 2)
+    sw.stop('a')
+    self.assertAlmostEqual(2, sw.timervalue('a'), 2)
+
+
 if __name__ == '__main__':
   basetest.main()

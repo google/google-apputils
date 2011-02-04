@@ -1238,5 +1238,56 @@ class TearDownOrderWatcherSubClass(TearDownOrderWatcherBaseClass):
     self.assertTrue(True)
 
 
+class AssertSequenceStartsWithTest(basetest.TestCase):
+
+  def setUp(self):
+    self.a = [5, 'foo', {'c': 'd'}, None]
+
+  def testEmptySequenceStartsWithEmptyPrefix(self):
+    self.assertSequenceStartsWith([], ())
+
+  def testSequencePrefixIsAnEmptyList(self):
+    self.assertSequenceStartsWith([[]], ([], 'foo'))
+
+  def testRaiseIfEmptyPrefixWithNonEmptyWhole(self):
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        'Prefix length is 0 but whole length is %d: %s' % (
+            len(self.a), '\[5, \'foo\', \{\'c\': \'d\'\}, None\]'),
+        self.assertSequenceStartsWith, [], self.a)
+
+  def testSingleElementPrefix(self):
+    self.assertSequenceStartsWith([5], self.a)
+
+  def testTwoElementPrefix(self):
+    self.assertSequenceStartsWith((5, 'foo'), self.a)
+
+  def testPrefixIsFullSequence(self):
+    self.assertSequenceStartsWith([5, 'foo', {'c': 'd'}, None], self.a)
+
+  def testStringPrefix(self):
+    self.assertSequenceStartsWith('abc', 'abc123')
+
+  def testConvertNonSequencePrefixToSequenceAndTryAgain(self):
+    self.assertSequenceStartsWith(5, self.a)
+
+  def testWholeNotASequence(self):
+    msg = ('For whole: len\(5\) is not supported, it appears to be type: '
+           '<type \'int\'>')
+    self.assertRaisesWithRegexpMatch(AssertionError, msg,
+                                     self.assertSequenceStartsWith, self.a, 5)
+
+  def testRaiseIfSequenceDoesNotStartWithPrefix(self):
+    msg = ('prefix: \[\'foo\', \{\'c\': \'d\'\}\] not found at start of whole: '
+           '\[5, \'foo\', \{\'c\': \'d\'\}, None\].')
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, msg, self.assertSequenceStartsWith, ['foo', {'c': 'd'}],
+        self.a)
+
+  def testRaiseIfTypesArNotSupported(self):
+    self.assertRaisesWithRegexpMatch(
+        TypeError, 'unhashable type', self.assertSequenceStartsWith,
+        {'a': 1, 2: 'b'}, {'a': 1, 2: 'b', 'c': '3'})
+
 if __name__ == '__main__':
   basetest.main()
