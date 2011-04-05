@@ -157,6 +157,18 @@ class StopwatchUnitTest(basetest.TestCase):
     sw.stop('a')
     self.assertAlmostEqual(2, sw.timervalue('a'), 2)
 
+  def testResultsDoesntReset(self):
+    sw = stopwatch.StopWatch()
+    sw.start()
+    self.time.sleep(1)
+    sw.start('a')
+    self.time.sleep(1)
+    sw.stop('a')
+    sw.stop()
+    res1 = sw.results(verbose=True)
+    res2 = sw.results(verbose=True)
+    self.assertListEqual(res1, res2)
+
 
 if __name__ == '__main__':
   basetest.main()

@@ -224,6 +224,7 @@ def _actual_start():
     return
   # just in case there's non-trivial stuff happening in __main__
   del tb
+  sys.exc_clear()
 
   try:
     really_start()

@@ -216,6 +216,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     else:
       self.fail('Expecting AssertionError')
 
+    self.assertRaises(AssertionError, self.assertDictEqual, (1, 2), {})
+    self.assertRaises(AssertionError, self.assertDictEqual, {}, (1, 2))
+
   def testAssertSetEqual(self):
     set1 = set()
     set2 = set()
@@ -313,6 +316,16 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     self.assertAlmostEqual(1.00000001, 1.0)
     self.assertNotAlmostEqual(1.0000001, 1.0)
 
+  def testAssertAlmostEqualsWithDelta(self):
+    self.assertAlmostEquals(3.14, 3, delta=0.2)
+    self.assertAlmostEquals(2.81, 3.14, delta=1)
+    self.assertAlmostEquals(-1, 1, delta=3)
+    self.assertRaises(AssertionError, self.assertAlmostEquals,
+                      3.14, 2.81, delta=0.1)
+    self.assertRaises(AssertionError, self.assertAlmostEquals,
+                      1, 2, delta=0.5)
+    self.assertNotAlmostEquals(3.14, 2.81, delta=0.1)
+
   def testGetCommandString_listOfStringArgument(self):
     expected = "'command' 'arg-0'"
 
@@ -356,6 +369,12 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
         self.assertRegexMatch,
         'str',
         regexes=[])
+
+  def testAssertRegexMatch_badArguments(self):
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        'regexes is a string; it needs to be a list of strings.',
+        self.assertRegexMatch, '1.*2', '1 2')
 
   def testAssertCommandFailsStderr(self):
     self.assertCommandFails(
@@ -516,6 +535,9 @@ test case
                                    type1(sample_text),
                                    type2(revised_sample_text))
 
+    self.assertRaises(AssertionError, self.assertMultiLineEqual, (1, 2), 'str')
+    self.assertRaises(AssertionError, self.assertMultiLineEqual, 'str', (1, 2))
+
   # TODO(user): Move into basetest.py.
   def AssertRaisesWithMatch(self, expected_exception,
                             expected_exception_message, callable_obj, *args,
@@ -593,6 +615,7 @@ test case
     self.assertRaises(AssertionError, self.assertIsNone, False)
     self.assertIsNotNone('Google')
     self.assertRaises(AssertionError, self.assertIsNotNone, None)
+    self.assertRaises(AssertionError, self.assertIsNone, (1, 2))
 
   def testAssertIs(self):
     self.assertIs(object, object)

@@ -166,8 +166,6 @@ class StopWatch(object):
     """
     now = time.time()
 
-    self.accum['overhead'] = self.overhead(now=now)
-    self.counters['overhead'] = 1
     all_names = self.accum.keys()
     names = []
 
@@ -176,11 +174,14 @@ class StopWatch(object):
     all_names.sort()
     if verbose:
       names = all_names
-    if 'total' in self.accum or 'total' in self.timers:
-      names.append('total')
 
     results = [(name, self.timervalue(name, now=now), self.counters[name])
                for name in names]
+    if verbose:
+      results.append(('overhead', self.overhead(now=now), 1))
+    if 'total' in self.accum or 'total' in self.timers:
+      results.append(('total', self.timervalue('total', now=now),
+                      self.counters['total']))
     return results
 
   def dump(self, verbose=False):

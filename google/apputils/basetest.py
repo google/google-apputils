@@ -312,52 +312,74 @@ class TestCase(unittest.TestCase):
       desc = '\n'.join((desc, doc_first_line))
     return desc
 
-  # add Python 2.3 float-related methods if we don't already have them
-  if not hasattr(unittest.TestCase, 'failUnlessAlmostEqual'):
+  def failUnlessAlmostEqual(self, first, second,
+                            places=7, msg=None, delta=None):
+    """Fail if two objects 'differ a lot'.
 
-    def failUnlessAlmostEqual(self, first, second, places=7, msg=None):
-      """Fail if two objects are unequal up to a number of decimal places.
+    If delta is given 'differ a lot' means they differ by more than delta,
+    otherwise 'differ a lot' means first and second are unequal up to
+    a number of decimal places.
 
-      Args:
-        first:
-        second:
-        places:  Number of decimal places to which the difference between
-          first and second is rounded; if this is nonzero after rounding, the
-          test fails.  Note that decimal places (from zero) are usually not
-          the same as significant digits (measured from the most signficant
-          digit).
-        msg:  Message to print if the test fails.
-      Raises:
-        AssertionError: the objects are not close enough to equal.
-      """
-      if round(second-first, places) != 0:
+    Args:
+      first:
+      second:
+      places:  Number of decimal places to which the difference between
+        first and second is rounded; if this is nonzero after rounding, the
+        test fails.  Note that decimal places (from zero) are usually not
+        the same as significant digits (measured from the most signficant
+        digit).
+      msg:  Message to print if the test fails.
+      delta: If first and second are within delta of each other they are
+        considered to be almost equal. If delta is None or 0 then places are
+        used for comparison.
+    Raises:
+      AssertionError: the objects are not close enough to equal.
+    """
+    if delta:
+      if abs(second - first) > delta:
+        raise self.failureException(
+            msg or '%r differs from %r by more than %r' %
+            (first, second, delta))
+    else:
+      if round(second - first, places) != 0:
         raise self.failureException(
             msg or '%r != %r within %r places' % (first, second, places))
 
-    assertAlmostEqual = assertAlmostEquals = failUnlessAlmostEqual
+  assertAlmostEqual = assertAlmostEquals = failUnlessAlmostEqual
 
-  if not hasattr(unittest.TestCase, 'failIfAlmostEqual'):
+  def failIfAlmostEqual(self, first, second, places=7, msg=None, delta=None):
+    """Fail if two objects do not 'differ a lot'.
 
-    def failIfAlmostEqual(self, first, second, places=7, msg=None):
-      """Fail if two objects are equal up to a number of decimal places.
+    If delta is given 'differ a lot' means they differ by more than delta,
+    otherwise 'differ a lot' means first and second are unequal up to
+    a number of decimal places.
 
-      Args:
-        first: The first object to compare.
-        second: The second object to compare.
-        places: The number of decimal places (default: 7)
-          considered significant.  The difference between first and
-          second is rounded to this number of decimal places before
-          being compared with zero.  This is not the same as the
-          number of significant digits.
-        msg:  Error message used if the test fails.
-      Raises:
-        AssertionError: the objects are close enough to equal.
-      """
-      if round(second-first, places) == 0:
+    Args:
+      first: The first object to compare.
+      second: The second object to compare.
+      places: The number of decimal places (default: 7)
+        considered significant.  The difference between first and
+        second is rounded to this number of decimal places before
+        being compared with zero.  This is not the same as the
+        number of significant digits.
+      msg:  Error message used if the test fails.
+      delta: If first and second are within delta of each other they are
+        considered to be almost equal. If delta is None or 0 then places are
+        used for comparison.
+    Raises:
+      AssertionError: the objects are close enough to equal.
+    """
+    if delta:
+      if abs(second - first) <= delta:
+        raise self.failureException(
+            msg or '%r differs from %r by less than %r' %
+            (first, second, delta))
+    else:
+      if round(second - first, places) == 0:
         raise self.failureException(
             msg or '%r == %r within %r places' % (first, second, places))
 
-    assertNotAlmostEqual = assertNotAlmostEquals = failIfAlmostEqual
+  assertNotAlmostEqual = assertNotAlmostEquals = failIfAlmostEqual
 
   def failIfEqual(self, first, second, msg=None):
     """Verify that first != second.
@@ -591,8 +613,8 @@ class TestCase(unittest.TestCase):
 
   def assertDictEqual(self, d1, d2, msg=None):
     """Checks whether d1 and d2 contain the same key/value pairs."""
-    assert isinstance(d1, dict), 'First argument is not a dict: %r' % d1
-    assert isinstance(d2, dict), 'Second argument is not a dict: %r' % d2
+    assert isinstance(d1, dict), 'First argument is not a dict: %r' % (d1,)
+    assert isinstance(d2, dict), 'Second argument is not a dict: %r' % (d2,)
 
     if d1 != d2:
 
@@ -673,9 +695,9 @@ class TestCase(unittest.TestCase):
   def assertMultiLineEqual(self, first, second, msg=None):
     """Assert that two multi-line strings are equal."""
     assert isinstance(first, types.StringTypes), (
-        'First argument is not a string: %r' % first)
+        'First argument is not a string: %r' % (first,))
     assert isinstance(second, types.StringTypes), (
-        'Second argument is not a string: %r' % second)
+        'Second argument is not a string: %r' % (second,))
 
     if first == second:
       return
@@ -713,9 +735,6 @@ class TestCase(unittest.TestCase):
       msg = '"%r" unexpectedly not greater than or equal to "%r"' % (a, b)
     self.assert_(a >= b, msg)
 
-  # TODO(user): Maybe add a assertWithinTolerance(a, b, t) to
-  # check (b - t) <= a <= (b + t), if it's needed by more people than just me
-
   def assertIs(self, a, b, msg=None):
     """Just like self.assert_(a is b), but with a nicer default message."""
     if msg is None:
@@ -731,7 +750,7 @@ class TestCase(unittest.TestCase):
   def assertIsNone(self, obj, msg=None):
     """Just like self.assert_(obj is None), but with a nicer default message."""
     if msg is None:
-      msg = '"%r" unexpectedly not None' % obj
+      msg = '"%r" unexpectedly not None' % (obj,)
     self.assert_(obj is None, msg)
 
   def assertIsNotNone(self, obj, msg='unexpectedly None'):
@@ -775,6 +794,8 @@ class TestCase(unittest.TestCase):
     """
     if message is None: message = 'Regexes not found.: %s' % regexes
 
+    if isinstance(regexes, basestring):
+      self.fail('regexes is a string; it needs to be a list of strings.')
     if not regexes:
       self.fail('No regexes specified.')
 

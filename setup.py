@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NB: this requires setuptools be installed.
-# Try sudo apt-get install python-setuptools
+import ez_setup
+ez_setup.use_setuptools()
+
 from setuptools import setup, find_packages
 from setuptools.command import test
 
