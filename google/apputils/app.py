@@ -163,18 +163,24 @@ def RegisterAndParseFlagsWithUsage():
   return argv
 
 
-def really_start():
-  """Initializes flag values, and calls __main__.main().
+def really_start(main=None):
+  """Initializes flag values, and calls main with non-flag arguments.
 
   Only non-flag arguments are passed to main().  The return value of main() is
   used as the exit status.
 
+  Args:
+    main: Main function to run with the list of non-flag arguments, or None
+      so that sys.modules['__main__'].main is to be used.
   """
   argv = RegisterAndParseFlagsWithUsage()
 
+  if main is None:
+    main = sys.modules['__main__'].main
+
   try:
     if FLAGS.run_with_pdb:
-      sys.exit(pdb.runcall(sys.modules['__main__'].main, argv))
+      sys.exit(pdb.runcall(main, argv))
     else:
       if FLAGS.run_with_profiling:
         # Avoid import overhead since most apps (including performance-sensitive
@@ -183,10 +189,10 @@ def really_start():
         import atexit
         profiler = profile.Profile()
         atexit.register(profiler.print_stats)
-        retval = profiler.runcall(sys.modules['__main__'].main, argv)
+        retval = profiler.runcall(main, argv)
         sys.exit(retval)
       else:
-        sys.exit(sys.modules['__main__'].main(argv))
+        sys.exit(main(argv))
   except UsageError, error:
     usage(shorthelp=1, detailed_error=error, exitcode=error.exitcode)
 
@@ -302,7 +308,7 @@ class ExceptionHandler(object):
     """Check if this exception handler want to handle this exception.
 
     Args:
-      exc: Exception, the current exception
+      unused_exc: Exception, the current exception
 
     Returns:
       boolean

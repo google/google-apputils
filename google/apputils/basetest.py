@@ -1321,20 +1321,160 @@ class TestProgramManualRun(unittest.TestProgram):
       unittest.TestProgram.runTests(self)
 
 
-def main(*args, **keys):
+def main(*args, **kwargs):
   """Executes a set of Python unit tests.
 
+  Usually this function is called without arguments, so the
+  unittest.TestProgram instance will get created with the default settings,
+  so it will run all test methods of all TestCase classes in the __main__
+  module.
+
   Args:
-   args: positional arguments passed through to unittest.TestProgram
-   keys: keyword arguments passed through to unittest.TestProgram()
+    args: Positional arguments passed through to unittest.TestProgram.__init__.
+    kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
   """
-  helpflag = app.HelpFlag()
-  if helpflag.name not in FLAGS:
-    flags.DEFINE_flag(helpflag)  # Register help flag IFF not prev. registered
+  _RunInApp(RunTests, args, kwargs)
 
-  argv = app.RegisterAndParseFlagsWithUsage()
 
-  test_runner = keys.get('testRunner')
+def _IsInAppMain():
+  """Returns True iff app.main or app.really_start is active."""
+  f = sys._getframe().f_back
+  app_dict = app.__dict__
+  while f:
+    if f.f_globals is app_dict and f.f_code.co_name in ('run', 'really_start'):
+      return True
+    f = f.f_back
+  return False
+
+
+class SavedFlag(object):
+  """Helper class for saving and restoring a flag value."""
+
+  def __init__(self, flag):
+    self.flag = flag
+    self.value = flag.value
+    self.present = flag.present
+
+  def RestoreFlag(self):
+    self.flag.value = self.value
+    self.flag.present = self.present
+
+
+def _RunInApp(function, args, kwargs):
+  """Executes a set of Python unit tests, ensuring app.really_start.
+
+  Most users should call basetest.main() instead of _RunInApp.
+
+  _RunInApp calculates argv to be the command-line arguments of this program
+  (without the flags), sets the default of FLAGS.alsologtostderr to True,
+  then it calls function(argv, args, kwargs), making sure that `function'
+  will get called within app.run() or app.really_start(). _RunInApp does this
+  by checking whether it is called by either app.run() or
+  app.really_start(), or by calling app.really_start() explicitly.
+
+  The reason why app.really_start has to be ensured is to make sure that
+  flags are parsed and stripped properly, and other initializations done by
+  the app module are also carried out, no matter if basetest.run() is called
+  from within or outside app.run().
+
+  If _RunInApp is called from within app.run(), then it will reparse
+  sys.argv and pass the result without command-line flags into the argv
+  argument of `function'. The reason why this parsing is needed is that
+  __main__.main() calls basetest.main() without passing its argv. So the
+  only way _RunInApp could get to know the argv without the flags is that
+  it reparses sys.argv.
+
+  _RunInApp changes the default of FLAGS.alsologtostderr to True so that the
+  test program's stderr will contain all the log messages unless otherwise
+  specified on the command-line. This overrides any explicit assignment to
+  FLAGS.alsologtostderr by the test program prior to the call to _RunInApp()
+  (e.g. in __main__.main).
+
+  Please note that _RunInApp (and the function it calls) is allowed to make
+  changes to kwargs.
+
+  Args:
+    function: basetest.RunTests or a similar function. It will be called as
+      function(argv, args, kwargs) where argv is a list containing the
+      elements of sys.argv without the command-line flags.
+    args: Positional arguments passed through to unittest.TestProgram.__init__.
+    kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
+  """
+  if _IsInAppMain():
+    # Save command-line flags so the side effects of FLAGS(sys.argv) can be
+    # undone.
+    saved_flags = dict((f.name, SavedFlag(f))
+                       for f in FLAGS.FlagDict().itervalues())
+
+    # Here we'd like to change the default of alsologtostderr from False to
+    # True, so the test programs's stderr will contain all the log messages.
+    # The desired effect is that if --alsologtostderr is not specified in
+    # the command-line, and __main__.main doesn't set FLAGS.logtostderr
+    # before calling us (basetest.main), then our changed default takes
+    # effect and alsologtostderr becomes True.
+    #
+    # However, we cannot achive this exact effect, because here we cannot
+    # distinguish these situations:
+    #
+    # A. main.__main__ has changed it to False, it hasn't been specified on
+    #    the command-line, and the default was kept as False. We should keep
+    #    it as False.
+    #
+    # B. main.__main__ hasn't changed it, it hasn't been specified on the
+    #    command-line, and the default was kept as False. We should change
+    #    it to True here.
+    #
+    # As a workaround, we assume that main.__main__ never changes
+    # FLAGS.alsologstderr to False, thus the value of the flag is determined
+    # by its default unless the command-line overrides it. We want to change
+    # the default to True, and we do it by setting the flag value to True, and
+    # letting the command-line override it in FLAGS(sys.argv) below by not
+    # restoring it in saved_flag.RestoreFlag().
+    if 'alsologtostderr' in saved_flags:
+      FLAGS.alsologtostderr = True
+      del saved_flags['alsologtostderr']
+
+    # The call FLAGS(sys.argv) parses sys.argv, returns the arguments
+    # without the flags, and -- as a side effect -- modifies flag values in
+    # FLAGS. We don't want the side effect, because we don't want to
+    # override flag changes the program did (e.g. in __main__.main)
+    # after the command-line has been parsed. So we have the for loop below
+    # to change back flags to their old values.
+    argv = FLAGS(sys.argv)
+    for saved_flag in saved_flags.itervalues():
+      saved_flag.RestoreFlag()
+
+
+    function(argv, args, kwargs)
+  else:
+    # Send logging to stderr. Use --alsologtostderr instead of --logtostderr
+    # in case tests are reading their own logs.
+    if 'alsologtostderr' in FLAGS:
+      FLAGS.SetDefault('alsologtostderr', True)
+
+    def Main(argv):
+      function(argv, args, kwargs)
+
+    app.really_start(main=Main)
+
+
+def RunTests(argv, args, kwargs):
+  """Executes a set of Python unit tests within app.really_start.
+
+  Most users should call basetest.main() instead of RunTests.
+
+  Please note that RunTests should be called from app.really_start (which is
+  called from app.run()). Calling basetest.main() would ensure that.
+
+  Please note that RunTests is allowed to make changes to kwargs.
+
+  Args:
+    argv: sys.argv with the command-line flags removed from the front, i.e. the
+      argv with which app.run() has called __main__.main.
+    args: Positional arguments passed through to unittest.TestProgram.__init__.
+    kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
+  """
+  test_runner = kwargs.get('testRunner')
 
   # Make sure tmpdir exists
   if not os.path.isdir(FLAGS.test_tmpdir):
@@ -1345,12 +1485,14 @@ def main(*args, **keys):
   if hasattr(main_mod, 'setUp') and callable(main_mod.setUp):
     main_mod.setUp()
 
-  # Set sys.argv so the unittest module can do its own parsing
-  sys.argv = argv
+  # Let unittest.TestProgram.__init__ called by
+  # TestProgramManualRun.__init__ do its own argv parsing, e.g. for '-v',
+  # on argv, which is sys.argv without the command-line flags.
+  kwargs.setdefault('argv', argv)
 
   try:
     result = None
-    test_program = TestProgramManualRun(*args, **keys)
+    test_program = TestProgramManualRun(*args, **kwargs)
     if test_runner:
       test_program.testRunner = test_runner
     else:
