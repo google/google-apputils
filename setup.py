@@ -42,8 +42,9 @@ class GoogleTestWrapper(test.test):
 
 setup(
     name = "google-apputils",
-    version = "0.2",
+    version = "0.2.1",
     packages = find_packages(exclude=["tests"]),
+    scripts = ["ez_setup.py"],
     entry_points = {
         "distutils.commands": [
             "google_test = google.apputils.setup_command:GoogleTest",
