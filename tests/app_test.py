@@ -28,6 +28,7 @@ from google.apputils import basetest
 
 from google.apputils import app
 import gflags as flags
+from google.apputils.tests import toollog_proto_test_helper
 
 FLAGS = flags.FLAGS
 

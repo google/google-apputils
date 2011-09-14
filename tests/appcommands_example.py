@@ -32,13 +32,18 @@ flags.DEFINE_string('hint', '', 'Global hint to show in commands')
 class Test1(appcommands.Cmd):
   """Help for test1."""
 
-  def __init__(self, name, flag_values):
+  def __init__(self, name, flag_values, **kargs):
     """Init and register flags specific to command."""
-    appcommands.Cmd.__init__(self, name, flag_values)
+    appcommands.Cmd.__init__(self, name, flag_values=flag_values, **kargs)
+    # self._all_commands_help allows you to define a different message to be
+    # displayed when all commands are displayed vs. the single command.
+    self._all_commands_help = ''
     # Flag --fail1 is specific to this command
-    flags.DEFINE_boolean('fail1', False, 'Make test1 fail', flag_values)
-    flags.DEFINE_string('foo', '', 'Param foo', flag_values)
-    flags.DEFINE_string('bar', '', 'Param bar', flag_values)
+    flags.DEFINE_boolean('fail1', False, 'Make test1 fail',
+                         flag_values=flag_values)
+    flags.DEFINE_string('foo', '', 'Param foo', flag_values=flag_values)
+    flags.DEFINE_string('bar', '', 'Param bar', flag_values=flag_values)
+    flags.DEFINE_integer('intfoo', 0, 'Integer foo', flag_values=flag_values)
 
   def Run(self, argv):
     """Output 'Command1' and flag info.
@@ -63,9 +68,10 @@ class Test2(appcommands.Cmd):
   def __init__(self, name, flag_values):
     """Init and register flags specific to command."""
     appcommands.Cmd.__init__(self, name, flag_values)
-    flags.DEFINE_boolean('fail2', False, 'Make test2 fail', flag_values)
-    flags.DEFINE_string('foo', '', 'Param foo', flag_values)
-    flags.DEFINE_string('bar', '', 'Param bar', flag_values)
+    flags.DEFINE_boolean('fail2', False, 'Make test2 fail',
+                         flag_values=flag_values)
+    flags.DEFINE_string('foo', '', 'Param foo', flag_values=flag_values)
+    flags.DEFINE_string('bar', '', 'Param bar', flag_values=flag_values)
 
   def Run(self, argv):
     """Output 'Command2' and flag info.
@@ -89,11 +95,19 @@ def Test3(unused_argv):
   print 'Command3'
 
 
+def Test4(unused_argv):
+  """Help for test4."""
+  print 'Command4'
+
+
 def main(unused_argv):
   """Register the commands."""
-  appcommands.AddCmd('test1', Test1)
+  appcommands.AddCmd('test1', Test1, command_aliases=['testalias1',
+                                                      'testalias2'])
   appcommands.AddCmd('test2', Test2)
   appcommands.AddCmdFunc('test3', Test3)
+  appcommands.AddCmdFunc('test4', Test4, command_aliases=['testalias3'],
+                         all_commands_help='')
 
 
 if __name__ == '__main__':

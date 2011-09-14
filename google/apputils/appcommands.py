@@ -47,7 +47,7 @@ class CmdDate(appcommands.Cmd):
 
 
 def main(argv):
-  appcommands.AddCmd('date', CmdDate)
+  appcommands.AddCmd('date', CmdDate, command_aliases=['data_now'])
 
 
 if __name__ == '__main__':
@@ -57,6 +57,9 @@ if __name__ == '__main__':
 In the above example the name of the registered command on the command line is
 'date'. Thus, to get the date you would execute:
   tool date
+The above example also added the command alias 'data_now' which allows to
+replace 'tool date' with 'tool data_now'.
+
 To get a list of available commands run:
   tool help
 For help with a specific command, you would execute:
@@ -116,6 +119,7 @@ Inner working:
 import os
 import pdb
 import sys
+import traceback
 
 from google.apputils import app
 import gflags as flags
@@ -131,6 +135,7 @@ class AppCommandsError(Exception):
 
 _cmd_argv = None        # remaning arguments with index 0 = sys.argv[0]
 _cmd_list = {}          # list of commands index by name (_Cmd instances)
+_cmd_alias_list = {}    # list of command_names index by command_alias
 
 
 def GetAppBasename():
@@ -158,6 +163,13 @@ def GetCommandList():
   return _cmd_list
 
 
+def GetCommandAliasList():
+  """Return list of registered command aliases."""
+  # pylint: disable-msg=W0602
+  global _cmd_alias_list
+  return _cmd_alias_list
+
+
 def GetCommandByName(name):
   """Get the command or None if name is not a registered command.
 
@@ -167,7 +179,7 @@ def GetCommandByName(name):
   Returns:
     Cmd instance holding the command or None
   """
-  return GetCommandList().get(name)
+  return GetCommandList().get(GetCommandAliasList().get(name))
 
 
 def GetCommandArgv():
@@ -189,7 +201,7 @@ class Cmd(object):
   needs any specific flags, use __init__ for registration.
   """
 
-  def __init__(self, name, flag_values):
+  def __init__(self, name, flag_values, command_aliases=None):
     """Initialize and check whether self is actually a Cmd instance.
 
     This can be used to register command specific flags. If you do so
@@ -197,14 +209,17 @@ class Cmd(object):
     parameter to any flags.DEFINE_*() call.
 
     Args:
-      name:        Name of the command
-      flag_values: FlagValues() instance that needs to be passed as flag_values
-                   parameter to any flags registering call.
+      name:            Name of the command
+      flag_values:     FlagValues() instance that needs to be passed as
+                       flag_values parameter to any flags registering call.
+      command_aliases: A list of command aliases that the command can be run as.
     Raises:
       AppCommandsError: if self is Cmd (Cmd is abstract)
     """
     self._command_name = name
+    self._command_aliases = command_aliases
     self._command_flags = flag_values
+    self._all_commands_help = None
     if type(self) is Cmd:
       raise AppCommandsError('Cmd is abstract and cannot be instantiated')
 
@@ -223,7 +238,8 @@ class Cmd(object):
     Raises:
       AppCommandsError: Always as in must be overwitten
     """
-    raise AppCommandsError(type(self) + '.Run() is not implemented')
+    raise AppCommandsError('%s.%s.Run() is not implemented' % (
+        type(self).__module__, type(self).__name__))
 
   def CommandRun(self, argv):
     """Execute the command with given arguments.
@@ -270,14 +286,20 @@ class Cmd(object):
       for flag_name in self._command_flags.FlagDict():
         delattr(FLAGS, flag_name)
 
-  def CommandGetHelp(self, unused_argv):
+  def CommandGetHelp(self, unused_argv, cmd_names=None):
     """Get help string for command.
 
     Args:
-      argv: Remaining command line flags and arguments after parsing command
-            (that is a copy of sys.argv at the time of the function call with
-            all parsed flags removed); unused in this default implementation,
-            but may be used in subclasses.
+      unused_argv: Remaining command line flags and arguments after parsing
+                   command (that is a copy of sys.argv at the time of the
+                   function call with all parsed flags removed); unused in this
+                   default implementation, but may be used in subclasses.
+      cmd_names:   Complete list of commands for which help is being shown at
+                   the same time. This is used to determine whether to return
+                   _all_commands_help, or the command's docstring.
+                   (_all_commands_help is used, if not None, when help is being
+                   shown for more than one command, otherwise the command's
+                   docstring is used.)
 
     Returns:
       Help string, one of the following (by order):
@@ -285,10 +307,21 @@ class Cmd(object):
         - Doc string of the Cmd class (if any)
         - Default fallback string
     """
-    if self.__doc__:
+    if (type(cmd_names) is list and len(cmd_names) > 1 and
+        self._all_commands_help is not None):
+      return flags.DocToHelp(self._all_commands_help)
+    elif self.__doc__:
       return flags.DocToHelp(self.__doc__)
     else:
       return 'No help available'
+
+  def CommandGetAliases(self):
+    """Get aliases for command.
+
+    Returns:
+      aliases: list of aliases for the command.
+    """
+    return self._command_aliases
 
 
 class _FunctionalCmd(Cmd):
@@ -298,7 +331,8 @@ class _FunctionalCmd(Cmd):
     cmd_func:   command function
   """
 
-  def __init__(self, name, flag_values, cmd_func):
+  def __init__(self, name, flag_values, cmd_func, all_commands_help=None,
+               **kargs):
     """Create a functional command.
 
     Args:
@@ -307,21 +341,32 @@ class _FunctionalCmd(Cmd):
                    parameter to any flags registering call.
       cmd_func:    Function to call when command is to be executed.
     """
-    Cmd.__init__(self, name, flag_values)
+    Cmd.__init__(self, name, flag_values, **kargs)
+    self._all_commands_help = all_commands_help
     self._cmd_func = cmd_func
 
-  def CommandGetHelp(self, unused_argv):
+  def CommandGetHelp(self, unused_argv, cmd_names=None):
     """Get help for command.
 
     Args:
-      argv: Remaining command line flags and arguments after parsing command
-            (that is a copy of sys.argv at the time of the function call with
-            all parsed flags removed); unused in this implementation.
+      unused_argv: Remaining command line flags and arguments after parsing
+                   command (that is a copy of sys.argv at the time of the
+                   function call with all parsed flags removed); unused in this
+                   implementation.
+      cmd_names:   By default, if help is being shown for more than one command,
+                   and this command defines _all_commands_help, then
+                   _all_commands_help will be displayed instead of the class
+                   doc. cmd_names is used to determine the number of commands
+                   being displayed and if only a single command is display then
+                   the class doc is returned.
 
     Returns:
       __doc__ property for command function or a message stating there is no
       help.
     """
+    if (type(cmd_names) is list and len(cmd_names) > 1 and
+        self._all_commands_help is not None):
+      return flags.DocToHelp(self._all_commands_help)
     if self._cmd_func.__doc__ is not None:
       return flags.DocToHelp(self._cmd_func.__doc__)
     else:
@@ -341,12 +386,13 @@ class _FunctionalCmd(Cmd):
     return self._cmd_func(argv)
 
 
-def _AddCmdInstance(command_name, cmd):
+def _AddCmdInstance(command_name, cmd, command_aliases=None):
   """Add a command from a Cmd instance.
 
   Args:
-    command_name: name of the command which will be used in argument parsing
-    cmd:          Cmd instance to register
+    command_name:    name of the command which will be used in argument parsing
+    cmd:             Cmd instance to register
+    command_aliases: A list of command aliases that the command can be run as.
 
   Raises:
     AppCommandsError: is command is already registered OR cmd is not a subclass
@@ -359,50 +405,84 @@ def _AddCmdInstance(command_name, cmd):
   # Update global command list.
   # pylint: disable-msg=W0602
   global _cmd_list
+  global _cmd_alias_list
   if not issubclass(cmd.__class__, Cmd):
     raise AppCommandsError('Command must be an instance of commands.Cmd')
-  # Only allow strings (reject unicode as well)
-  if not isinstance(command_name, str) or len(command_name) <= 1:
-    raise AppCommandsError("Command '%s' not a string or too short"
-                           % str(command_name))
-  if not command_name[0].isalpha():
-    raise AppCommandsError("Command '%s' does not start with a letter"
-                           % command_name)
-  if [c for c in command_name if not (c.isalnum() or c == '_')]:
-    raise AppCommandsError("Command '%s' contains non alphanumeric characters"
-                           % command_name)
-  if command_name in GetCommandList():
-    raise AppCommandsError("Command '%s' already defined" % command_name)
+
+  for name in [command_name] + (command_aliases or []):
+    _CheckCmdName(name)
+    _cmd_alias_list[name] = command_name
+
   _cmd_list[command_name] = cmd
 
 
-def AddCmd(command_name, cmd_class):
+def _CheckCmdName(name_or_alias):
+  """Only allow strings for command names and aliases (reject unicode as well).
+
+  Args:
+    name_or_alias: properly formatted string name or alias.
+
+  Raises:
+    AppCommandsError: is command is already registered OR cmd is not a subclass
+                      of Cmd
+    AppCommandsError: if name is already registered OR name is not a string OR
+                      name is too short OR name does not start with a letter OR
+                      name contains any non alphanumeric characters besides
+                      '_'.
+  """
+  if name_or_alias in GetCommandAliasList():
+    raise AppCommandsError("Command or Alias '%s' already definded" %
+                           name_or_alias)
+  if not isinstance(name_or_alias, str) or len(name_or_alias) <= 1:
+    raise AppCommandsError("Command '%s' not a string or too short"
+                           % str(name_or_alias))
+  if not name_or_alias[0].isalpha():
+    raise AppCommandsError("Command '%s' does not start with a letter"
+                           % name_or_alias)
+  if [c for c in name_or_alias if not (c.isalnum() or c == '_')]:
+    raise AppCommandsError("Command '%s' contains non alphanumeric characters"
+                           % name_or_alias)
+
+
+def AddCmd(command_name, cmd_class, **kargs):
   """Add a command from a Cmd subclass.
 
   Args:
-    command_name: name of the command which will be used in argument parsing
-    cmd_class:    A class derived from Cmd that holds the command to register
+    command_name:    name of the command which will be used in argument parsing
+    cmd_class:       A class derived from Cmd that holds the command to register
+    command_aliases: A list of command aliases that the command can be run as.
 
   Raises:
     AppCommandsError: if cmd_class is not a subclass of Cmd
   """
   if not issubclass(cmd_class, Cmd):
     raise AppCommandsError('Command must be an instance of commands.Cmd')
-  _AddCmdInstance(command_name, cmd_class(command_name, flags.FlagValues()))
+
+  _AddCmdInstance(command_name,
+                  cmd_class(command_name, flags.FlagValues(), **kargs),
+                  **kargs)
 
 
-def AddCmdFunc(command_name, cmd_func):
+def AddCmdFunc(command_name, cmd_func, command_aliases=None,
+               all_commands_help=None):
   """Add a new command to the list of registered commands.
 
   Args:
-    command_name: name of the command which will be used in argument parsing
-    cmd_func:     command function, this function received the remaining
-                  arguments as its only parameter. It is supposed to do the
-                  command work and then return with the command result that is
-                  being used as the shell exit code.
+    command_name:      name of the command which will be used in argument
+                       parsing
+    cmd_func:          command function, this function received the remaining
+                       arguments as its only parameter. It is supposed to do the
+                       command work and then return with the command result that
+                       is being used as the shell exit code.
+    command_aliases:   A list of command aliases that the command can be run as.
+    all_commands_help: Help message to be displayed in place of func.__doc__
+                       when all commands are displayed.
   """
   _AddCmdInstance(command_name,
-                  _FunctionalCmd(command_name, flags.FlagValues(), cmd_func))
+                  _FunctionalCmd(command_name, flags.FlagValues(), cmd_func,
+                                 command_aliases=command_aliases,
+                                 all_commands_help=all_commands_help),
+                  command_aliases)
 
 
 class _CmdHelp(Cmd):
@@ -443,7 +523,7 @@ class _CmdHelp(Cmd):
     AppcommandsUsage(shorthelp=0, writeto_stdout=1, detailed_error=None,
                      exitcode=1, show_cmd=show_cmd, show_global_flags=False)
 
-  def CommandGetHelp(self, unused_argv):
+  def CommandGetHelp(self, unused_argv, cmd_names=None):
     """Returns: Help for command."""
     cmd_help = ('Help for all or selected command:\n'
                 '\t%(prog)s help [<command>]\n\n'
@@ -550,11 +630,23 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
   # Show the command help (none, one specific, or all)
   for name in cmd_names:
     command = GetCommandByName(name)
-    prefix1 = '%-*s ' % (GetMaxCommandLength()+1, name)
-    cmd_help = command.CommandGetHelp(GetCommandArgv()).strip()
-    stdfile.write(flags.TextWrap(cmd_help, flags.GetHelpWidth(), prefix,
-                                 prefix1))
-    stdfile.write('\n\n')
+    cmd_help = command.CommandGetHelp(GetCommandArgv(), cmd_names=cmd_names)
+    cmd_help = cmd_help.strip()
+    all_names = ', '.join([name] + (command.CommandGetAliases() or []))
+    if len(all_names) + 1 >= len(prefix) or not cmd_help:
+      # If command/alias list would reach over help block-indent
+      # start the help block on a new line.
+      stdfile.write(flags.TextWrap(all_names, flags.GetHelpWidth()))
+      stdfile.write('\n')
+      prefix1 = prefix
+    else:
+      prefix1 = all_names.ljust(GetMaxCommandLength() + 2)
+    if cmd_help:
+      stdfile.write(flags.TextWrap(cmd_help, flags.GetHelpWidth(), prefix,
+                                   prefix1))
+      stdfile.write('\n\n')
+    else:
+      stdfile.write('\n')
     # When showing help for exactly one command we show its flags
     if len(cmd_names) == 1:
       # Need to register flags for command prior to be able to use them.
@@ -643,7 +735,8 @@ def _CommandsStart():
   except SystemExit, e:
     sys.exit(e.code)
   except Exception, error:
-    ShortHelpAndExit('FATAL error in main: %s' % error)
+    traceback.print_exc()  # Print a backtrace to stderr.
+    ShortHelpAndExit('\nFATAL error in main: %s' % error)
 
   if len(GetCommandArgv()) > 1:
     command = GetCommand(command_required=True)

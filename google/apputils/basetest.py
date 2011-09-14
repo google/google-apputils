@@ -792,17 +792,15 @@ class TestCase(unittest.TestCase):
         See "Notes" above for detailed notes on how this is interpreted.
       message:  The message to be printed if the test fails.
     """
-    if message is None: message = 'Regexes not found.: %s' % regexes
-
     if isinstance(regexes, basestring):
       self.fail('regexes is a string; it needs to be a list of strings.')
     if not regexes:
       self.fail('No regexes specified.')
 
-    regex_str = '(.|\n)*((%s))(.|\n)*' % ')|('.join(regexes)
-    regex = re.compile(regex_str, re.MULTILINE)
+    regex = '(?:%s)' % ')|(?:'.join(regexes)
 
-    self.assert_(regex.match(actual_str) is not None, message)
+    if not re.search(regex, actual_str, re.MULTILINE):
+      self.fail(message or ('Regexes not found.: %s' % regexes))
 
   def assertCommandSucceeds(self, command, regexes=[''], env=None,
                             close_fds=True):
@@ -867,6 +865,56 @@ class TestCase(unittest.TestCase):
                 _QuoteLongString(err),
                 regexes)))
 
+  def assertRaisesWithPredicateMatch(self, expected_exception, predicate,
+                                     callable_obj, *args,
+                                     **kwargs):
+    """Asserts that exception is thrown and predicate(exception) is true.
+
+    Args:
+      expected_exception: Exception class expected to be raised.
+      predicate: Function of one argument that inspects the passed-in exception
+        and returns True (success) or False (please fail the test).
+      callable_obj: Function to be called.
+      args: Extra args.
+      kwargs: Extra keyword args.
+    """
+    try:
+      callable_obj(*args, **kwargs)
+    except expected_exception, err:
+      self.assert_(predicate(err),
+                   '%r does not match predicate %r' % (err, predicate))
+    else:
+      self.fail(expected_exception.__name__ + ' not raised')
+
+  def assertRaisesWithLiteralMatch(self, expected_exception,
+                                   expected_exception_message, callable_obj,
+                                   *args, **kwargs):
+    """Asserts that the message in a raised exception equals the given string.
+
+    Unlike assertRaisesWithRegexpMatch this method takes a literal string, not
+    a regular expression.
+
+    Args:
+      expected_exception: Exception class expected to be raised.
+      expected_exception_message: String message expected in the raised
+        exception.  For a raise exception e, expected_exception_message must
+        equal str(e).
+      callable_obj: Function to be called.
+      args: Extra args.
+      kwargs: Extra kwargs.
+    """
+    try:
+      callable_obj(*args, **kwargs)
+    except expected_exception, err:
+      actual_exception_message = str(err)
+      self.assert_(expected_exception_message == actual_exception_message,
+                   'Exception message does not match.\n'
+                   'Expected: %r\n'
+                   'Actual: %r' % (expected_exception_message,
+                                   actual_exception_message))
+    else:
+      self.fail(expected_exception.__name__ + ' not raised')
+
   def assertRaisesWithRegexpMatch(self, expected_exception, expected_regexp,
                                   callable_obj, *args, **kwargs):
     """Asserts that the message in a raised exception matches the given regexp.
@@ -877,16 +925,25 @@ class TestCase(unittest.TestCase):
         found in error message.
       callable_obj: Function to be called.
       args: Extra args.
-      kwargs: Extra kwargs.
+      kwargs: Extra keyword args.
     """
+    # The reason that we do not delegate to
+    # assertRaisesWithPredicateMatch is so that we can provide a more
+    # informative message.
+    if isinstance(expected_regexp, basestring):
+      compiled_regexp = re.compile(expected_regexp)
+      regexp_description = str(expected_regexp)
+    else:
+      compiled_regexp = expected_regexp
+      regexp_description = 'Compiled regexp %s' % (expected_regexp,)
+
     try:
       callable_obj(*args, **kwargs)
     except expected_exception, err:
-      if isinstance(expected_regexp, basestring):
-        expected_regexp = re.compile(expected_regexp)
-      self.assert_(
-          expected_regexp.search(str(err)),
-          '"%s" does not match "%s"' % (expected_regexp.pattern, str(err)))
+      exception_message = str(err)
+      self.assert_(bool(compiled_regexp.search(exception_message)),
+                   '%s does not match %s' % (regexp_description,
+                                             exception_message))
     else:
       self.fail(expected_exception.__name__ + ' not raised')
 

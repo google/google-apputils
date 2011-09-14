@@ -21,7 +21,7 @@ from setuptools.command import test
 
 REQUIRE = [
     "python-dateutil>=1.4",
-    "python-gflags==1.4",
+    "python-gflags>=1.4",
     "pytz>=2010",
     ]
 
@@ -42,7 +42,7 @@ class GoogleTestWrapper(test.test):
 
 setup(
     name = "google-apputils",
-    version = "0.2.1",
+    version = "0.2.2",
     packages = find_packages(exclude=["tests"]),
     scripts = ["ez_setup.py"],
     entry_points = {

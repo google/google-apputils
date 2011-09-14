@@ -81,7 +81,6 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     self.assertRaises(basetest.OutputDifferedError, basetest.DiffTestStdout,
                       stdout_filename)
 
-
   def testFlags(self):
     if FLAGS.testid == 1:
       self.assertEqual(FLAGS.test_random_seed, 301)
@@ -357,6 +356,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
   def testAssertRegexMatch_matches(self):
     self.assertRegexMatch('str', ['str'])
 
+  def testAssertRegexMatch_matchesSubstring(self):
+    self.assertRegexMatch('pre-str-post', ['str'])
+
   def testAssertRegexMatch_multipleRegexMatches(self):
     self.assertRegexMatch('str', ['rts', 'str'])
 
@@ -530,45 +532,16 @@ test case
 
     for type1 in (str, unicode):
       for type2 in (str, unicode):
-        self.AssertRaisesWithMatch(AssertionError, sample_text_error,
-                                   self.assertMultiLineEqual,
-                                   type1(sample_text),
-                                   type2(revised_sample_text))
+        self.assertRaisesWithLiteralMatch(AssertionError, sample_text_error,
+                                          self.assertMultiLineEqual,
+                                          type1(sample_text),
+                                          type2(revised_sample_text))
 
     self.assertRaises(AssertionError, self.assertMultiLineEqual, (1, 2), 'str')
     self.assertRaises(AssertionError, self.assertMultiLineEqual, 'str', (1, 2))
 
-  # TODO(user): Move into basetest.py.
-  def AssertRaisesWithMatch(self, expected_exception,
-                            expected_exception_message, callable_obj, *args,
-                            **kwargs):
-    """Asserts that the message in a raised exception equals the given string.
-
-    Unlike assertRaisesWithRegexpMatch this method takes a literal string, not
-    a regular expression.
-
-    Args:
-      expected_exception: Exception class expected to be raised.
-      expected_exception_message: String message expected in the raised
-        exception.  For a raise exception e, expected_exception_message must
-        equal str(e).
-      callable_obj: Function to be called.
-      args: Extra args.
-      kwargs: Extra kwargs.
-    """
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception, err:
-      actual_exception_message = str(err)
-      self.assert_('Exception message does not match.\n'
-                   'Expected: %s\n'
-                   'Actual: %s' % (expected_exception_message,
-                                   actual_exception_message))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
-
   def testAssertMultiLineEqualAddsNewlinesIfNeeded(self):
-    self.AssertRaisesWithMatch(
+    self.assertRaisesWithLiteralMatch(
         AssertionError,
         '\n'
         '  line1\n'
@@ -583,7 +556,7 @@ test case
         'line3')
 
   def testAssertMultiLineEqualShowsMissingNewlines(self):
-    self.AssertRaisesWithMatch(
+    self.assertRaisesWithLiteralMatch(
         AssertionError,
         '\n'
         '  line1\n'
@@ -597,17 +570,17 @@ test case
         'line2')
 
   def testAssertMultiLineEqualShowsExtraNewlines(self):
-    self.AssertRaisesWithMatch(
+    self.assertRaisesWithLiteralMatch(
         AssertionError,
         '\n'
         '  line1\n'
         '- line2\n'
         '+ line2\n'
-        '?       +\n',
+        '?      +\n',
         self.assertMultiLineEqual,
         'line1\n'
         'line2',
-        'line1\n',
+        'line1\n'
         'line2\n')
 
   def testAssertIsNone(self):
@@ -630,6 +603,39 @@ test case
     self.assertBetween(-1e10, -1e10000, 0)
     self.assertRaises(AssertionError, self.assertBetween, 9.4, 9.3, 9.3999)
     self.assertRaises(AssertionError, self.assertBetween, -1e10000, -1e10, 0)
+
+  def testAssertRaisesWithPredicateMatch_noRaiseFails(self):
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, '^Exception not raised$',
+        self.assertRaisesWithPredicateMatch, Exception,
+        lambda e: True,
+        lambda: 1)  # don't raise
+
+  def testAssertRaisesWithPredicateMatch_raisesWrongExceptionFails(self):
+    def _RaiseValueError():
+      raise ValueError
+
+    self.assertRaises(
+        ValueError,
+        self.assertRaisesWithPredicateMatch,
+        IOError, lambda e: True, _RaiseValueError)
+
+  def testAssertRaisesWithPredicateMatch_predicateFails(self):
+    def _RaiseValueError():
+      raise ValueError
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, ' does not match predicate ',
+        self.assertRaisesWithPredicateMatch, ValueError,
+        lambda e: False,
+        _RaiseValueError)
+
+  def testAssertRaisesWithPredicateMatch_predicatePasses(self):
+    def _RaiseValueError():
+      raise ValueError
+
+    self.assertRaisesWithPredicateMatch (ValueError,
+                                         lambda e: True,
+                                         _RaiseValueError)
 
   def testAssertRaisesWithRegexpMatch(self):
     class ExceptionMock(Exception):
@@ -659,13 +665,14 @@ test case
       raise Exception('Unexpected')
 
     self.assertRaisesWithRegexpMatch(
-        AssertionError, r'"\^Expected\$" does not match "Unexpected"',
+        AssertionError, r'\^Expected\$ does not match Unexpected',
         self.assertRaisesWithRegexpMatch, Exception, '^Expected$', Stub)
     self.assertRaisesWithRegexpMatch(
-        AssertionError, r'"\^Expected\$" does not match "Unexpected"',
+        AssertionError, r'\^Expected\$ does not match Unexpected',
         self.assertRaisesWithRegexpMatch, Exception, u'^Expected$', Stub)
     self.assertRaisesWithRegexpMatch(
-        AssertionError, r'"\^Expected\$" does not match "Unexpected"',
+        AssertionError,
+        r'Compiled regexp <.*object at 0x.*> does not match Unexpected',
         self.assertRaisesWithRegexpMatch, Exception, re.compile('^Expected$'),
         Stub)
 
@@ -1070,7 +1077,6 @@ class GoogleTestBasePy24UnitTest(basetest.TestCase):
 
     self.assertSequenceEqual(expected_calls,
                              TearDownOrderWatcherBaseClass.calls_made)
-
 
 
 class StubPrefixedTestMethodsTestCase(basetest.TestCase):
