@@ -202,12 +202,12 @@ $PYTHON $TEST --help test1|grep -q "test1 *Help for test1" && die "Test 37 faile
 $PYTHON $TEST help test1|grep -q "following commands:" && die "Test 38 failed"
 $PYTHON $TEST help test1|grep -q "test1, testalias1, testalias2" || die\
   "Test 39 failed"
-$PYTHON $TEST help testalias1|grep -q "test1, testalias1, testalias2" || die\
+$PYTHON $TEST help testalias1|grep -q "[-]-foo" || die\
   "Test 40 failed"
-$PYTHON $TEST help testalias2|grep -q "test1, testalias1, testalias2" || die\
+$PYTHON $TEST help testalias2|grep -q "[-]-foo" || die\
   "Test 41 failed"
-$PYTHON $TEST help test4|grep -q "test4, testalias3" || die "Test 42 failed"
-$PYTHON $TEST help testalias2|grep -q "test4, testalias3" || die\
+$PYTHON $TEST help test4|grep -q "^ *Help for test4" || die "Test 42 failed"
+$PYTHON $TEST help testalias3|grep -q "^ *Help for test4" || die\
   "Test 43 failed"
 
 # Help for cmds with all_command_help.
@@ -262,5 +262,15 @@ appcommands.Run()" test` && die "Test 55 failed"
 echo "${RES}" | grep -q "USAGE: " || die "Test 56 failed"
 echo "${RES}" | grep -q -E "(^| )test[ \t]+Help1($| )" || die "Test 57 failed"
 echo "${RES}" | grep -q -E "(^| )Ha-ha($| )" || die "Test 58 failed"
+
+
+$PYTHON -c "${IMPORTS}
+class Test(appcommands.Cmd):
+  def Run(self, argv): return 0
+def test(*args, **kwargs):
+  return Test(*args, **kwargs)
+def main(argv):
+  appcommands.AddCmd('test', test)
+appcommands.Run()" test || die "Test 62 failed"
 
 echo "PASS"

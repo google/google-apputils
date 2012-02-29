@@ -21,6 +21,7 @@
 import os
 import shutil
 import socket
+import sys
 
 import mox
 
@@ -28,20 +29,11 @@ from google.apputils import basetest
 
 from google.apputils import app
 import gflags as flags
-from google.apputils.tests import toollog_proto_test_helper
 
 FLAGS = flags.FLAGS
 
 
 class TestFunctions(basetest.TestCase):
-  def setUp(self):
-    self.mox = mox.Mox()
-    # recreate the FLAGS.test_tmpdir
-    shutil.rmtree(FLAGS.test_tmpdir)
-    os.makedirs(FLAGS.test_tmpdir)
-
-  def tearDown(self):
-    self.mox.UnsetStubs()
 
   def testInstallExceptionHandler(self):
     self.assertRaises(TypeError, app.InstallExceptionHandler, 1)

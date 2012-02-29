@@ -183,8 +183,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     try:
       self.assertDictEqual({}, {'x': 1})
     except AssertionError, e:
-      self.assertMultiLineEqual("Dicts differ:\n"
-                                "+ 'x': 1",
+      self.assertMultiLineEqual("{} != {'x': 1}\n"
+                                "- {}\n"
+                                "+ {'x': 1}",
                                 str(e))
     else:
       self.fail('Expecting AssertionError')
@@ -192,7 +193,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     try:
       self.assertDictEqual({}, {'x': 1}, 'a message')
     except AssertionError, e:
-      self.assertEqual('a message', str(e))
+      self.assertEqual("{} != {'x': 1}\n"
+                       "- {}\n"
+                       "+ {'x': 1} : a message", str(e))
     else:
       self.fail('Expecting AssertionError')
 
@@ -201,16 +204,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
                            {'a': 2, 'c': 3, 'd': 4})
     except AssertionError, e:
       self.assertMultiLineEqual(
-          '\n'.join(["Dicts differ:",
-                     "- 'a': 1",
-                     "?      ^",
-                     "",
-                     "+ 'a': 2",
-                     "?      ^",
-                     "",
-                     "- 'b': 2",
-                     "  'c': 3",
-                     "+ 'd': 4"]),
+          '\n'.join(["{'a': 1, 'c': 3, 'b': 2} != {'a': 2, 'c': 3, 'd': 4}",
+                     "- {'a': 1, 'b': 2, 'c': 3}",
+                     "+ {'a': 2, 'c': 3, 'd': 4}"]),
           str(e))
     else:
       self.fail('Expecting AssertionError')
@@ -665,16 +661,11 @@ test case
       raise Exception('Unexpected')
 
     self.assertRaisesWithRegexpMatch(
-        AssertionError, r'\^Expected\$ does not match Unexpected',
-        self.assertRaisesWithRegexpMatch, Exception, '^Expected$', Stub)
+        AssertionError, r'"\^Expected\$" does not match "Unexpected"',
+        self.assertRaisesWithRegexpMatch, Exception, r'^Expected$', Stub)
     self.assertRaisesWithRegexpMatch(
-        AssertionError, r'\^Expected\$ does not match Unexpected',
-        self.assertRaisesWithRegexpMatch, Exception, u'^Expected$', Stub)
-    self.assertRaisesWithRegexpMatch(
-        AssertionError,
-        r'Compiled regexp <.*object at 0x.*> does not match Unexpected',
-        self.assertRaisesWithRegexpMatch, Exception, re.compile('^Expected$'),
-        Stub)
+        AssertionError, r'"\^Expected\$" does not match "Unexpected"',
+        self.assertRaisesWithRegexpMatch, Exception, r'^Expected$', Stub)
 
   def testAssertContainsInOrder(self):
     # Valids
@@ -1267,6 +1258,29 @@ class TearDownOrderWatcherSubClass(TearDownOrderWatcherBaseClass):
     self.assertTrue(True)
 
 
+# We define a multiply inheriting metaclass and an instance class to verify that
+# multiple inheritance for metaclasses.
+class OtherMetaClass(type):
+  def __init__(cls, name, bases, dict):
+    super(OtherMetaClass, cls).__init__(name, bases, dict)
+    cls.other_meta_called = True
+
+
+class MultipleMetaBeforeAfter(basetest.BeforeAfterTestCaseMeta, OtherMetaClass):
+  """Allow classes to support BeforeAfterTestCase and another metaclass.
+
+  Order matters here since we want to make sure BeforeAfterTestCaseMeta passes
+  through correctly to the other metaclass.
+  """
+
+
+class MultipleMetaInstanceClass(basetest.TestCase):
+  __metaclass__ = MultipleMetaBeforeAfter
+
+  def testOtherMetaInitCalled(self):
+    self.assertTrue(hasattr(MultipleMetaInstanceClass, 'other_meta_called'))
+
+
 class AssertSequenceStartsWithTest(basetest.TestCase):
 
   def setUp(self):
@@ -1318,5 +1332,33 @@ class AssertSequenceStartsWithTest(basetest.TestCase):
         TypeError, 'unhashable type', self.assertSequenceStartsWith,
         {'a': 1, 2: 'b'}, {'a': 1, 2: 'b', 'c': '3'})
 
+
+class InitNotNecessaryForAssertsTest(basetest.TestCase):
+  '''TestCase assertions should work even if __init__ wasn't correctly
+  called.
+
+  This is a hack, see comment in
+  basetest.TestCase._getAssertEqualityFunc. We know that not calling
+  __init__ of a superclass is a bad thing, but people keep doing them,
+  and this (even if a little bit dirty) saves them from shooting
+  themselves in the foot.
+  '''
+  def testSubclass(self):
+    class Subclass(basetest.TestCase):
+      def __init__(self):
+        pass
+
+    Subclass().assertEquals({}, {})
+
+  def testMultipleInheritance(self):
+
+    class Foo(object):
+      def __init__(self, *args, **kwargs):
+        pass
+
+    class Subclass(Foo, basetest.TestCase):
+      pass
+
+    Subclass().assertEquals({}, {})
 if __name__ == '__main__':
   basetest.main()

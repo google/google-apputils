@@ -73,5 +73,5 @@ $EXE --testid=4 --test_random_seed=123 --test_srcdir=abc --test_tmpdir=def
 ) || die "Test 4 failed" $?
 
 # Cleanup
-rmdir abc cba def fed ghi jkl
+rm -r abc cba def fed ghi jkl
 echo "Pass"

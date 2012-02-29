@@ -133,7 +133,7 @@ class AppCommandsError(Exception):
   pass
 
 
-_cmd_argv = None        # remaning arguments with index 0 = sys.argv[0]
+_cmd_argv = None        # remaining arguments with index 0 = sys.argv[0]
 _cmd_list = {}          # list of commands index by name (_Cmd instances)
 _cmd_alias_list = {}    # list of command_names index by command_alias
 
@@ -168,6 +168,14 @@ def GetCommandAliasList():
   # pylint: disable-msg=W0602
   global _cmd_alias_list
   return _cmd_alias_list
+
+
+def GetFullCommandList():
+  """Return list of registered commands, including aliases."""
+  all_cmds = dict(GetCommandList())
+  for cmd_alias, cmd_name in GetCommandAliasList().iteritems():
+    all_cmds[cmd_alias] = all_cmds.get(cmd_name)
+  return all_cmds
 
 
 def GetCommandByName(name):
@@ -236,7 +244,7 @@ class Cmd(object):
       Alternatively you may return None (or not use a return statement at all).
 
     Raises:
-      AppCommandsError: Always as in must be overwitten
+      AppCommandsError: Always as in must be overwritten
     """
     raise AppCommandsError('%s.%s.Run() is not implemented' % (
         type(self).__module__, type(self).__name__))
@@ -431,7 +439,7 @@ def _CheckCmdName(name_or_alias):
                       '_'.
   """
   if name_or_alias in GetCommandAliasList():
-    raise AppCommandsError("Command or Alias '%s' already definded" %
+    raise AppCommandsError("Command or Alias '%s' already defined" %
                            name_or_alias)
   if not isinstance(name_or_alias, str) or len(name_or_alias) <= 1:
     raise AppCommandsError("Command '%s' not a string or too short"
@@ -444,23 +452,25 @@ def _CheckCmdName(name_or_alias):
                            % name_or_alias)
 
 
-def AddCmd(command_name, cmd_class, **kargs):
-  """Add a command from a Cmd subclass.
+def AddCmd(command_name, cmd_factory, **kargs):
+  """Add a command from a Cmd subclass or factory.
 
   Args:
     command_name:    name of the command which will be used in argument parsing
-    cmd_class:       A class derived from Cmd that holds the command to register
+    cmd_factory:     A callable whose arguments match those of Cmd.__init__ and
+                     returns a Cmd. In the simplest case this is just a subclass
+                     of Cmd.
     command_aliases: A list of command aliases that the command can be run as.
 
   Raises:
-    AppCommandsError: if cmd_class is not a subclass of Cmd
+    AppCommandsError: if calling cmd_factory does not return an instance of Cmd.
   """
-  if not issubclass(cmd_class, Cmd):
+  cmd = cmd_factory(command_name, flags.FlagValues(), **kargs)
+
+  if not isinstance(cmd, Cmd):
     raise AppCommandsError('Command must be an instance of commands.Cmd')
 
-  _AddCmdInstance(command_name,
-                  cmd_class(command_name, flags.FlagValues(), **kargs),
-                  **kargs)
+  _AddCmdInstance(command_name, cmd, **kargs)
 
 
 def AddCmdFunc(command_name, cmd_func, command_aliases=None,
@@ -516,7 +526,7 @@ class _CmdHelp(Cmd):
     Returns:
       1 for failure
     """
-    if len(argv) > 1 and argv[1] in GetCommandList():
+    if len(argv) > 1 and argv[1] in GetFullCommandList():
       show_cmd = argv[1]
     else:
       show_cmd = None
@@ -701,7 +711,7 @@ def GetCommand(command_required):
 
   Returns:
     command or None, if command_required is True then return value is a valid
-    command or the program will exit. The program also exits if a comamnd was
+    command or the program will exit. The program also exits if a command was
     specified but that command does not exist.
   """
   # Update the global commands.
@@ -710,7 +720,7 @@ def GetCommand(command_required):
   _cmd_argv = ParseFlagsWithUsage(_cmd_argv)
   if len(_cmd_argv) < 2:
     if command_required:
-      ShortHelpAndExit('FATAL Command expectd but none given')
+      ShortHelpAndExit('FATAL Command expected but none given')
     return None
   command = GetCommandByName(_cmd_argv[1])
   if command is None:

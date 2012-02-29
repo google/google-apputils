@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 import ez_setup
 ez_setup.use_setuptools()
 
@@ -20,10 +22,16 @@ from setuptools import setup, find_packages
 from setuptools.command import test
 
 REQUIRE = [
-    "python-dateutil>=1.4",
+    "python-dateutil>=1.4,<2",
     "python-gflags>=1.4",
     "pytz>=2010",
     ]
+
+TEST_REQUIRE = ["mox>=0.5"]
+
+if sys.version_info[:2] < (2, 7):
+  # unittest2 is a backport of Python 2.7's unittest.
+  TEST_REQUIRE.append("unittest2>=0.5.1")
 
 
 # Mild hackery to get around the fact that we want to include a
@@ -31,7 +39,7 @@ REQUIRE = [
 # can't reference it until our package is installed. We simply
 # make a wrapper class that actually creates objects of the
 # appropriate class at runtime.
-class GoogleTestWrapper(test.test):
+class GoogleTestWrapper(test.test, object):
   test_dir = None
 
   def __new__(cls, *args, **kwds):
@@ -41,11 +49,12 @@ class GoogleTestWrapper(test.test):
     return dist
 
 setup(
-    name = "google-apputils",
-    version = "0.2.2",
-    packages = find_packages(exclude=["tests"]),
-    scripts = ["ez_setup.py"],
-    entry_points = {
+    name="google-apputils",
+    version="0.2.2",
+    packages=find_packages(exclude=["tests"]),
+    namespace_packages=find_packages(exclude=["tests"]),
+    scripts=["ez_setup.py"],
+    entry_points={
         "distutils.commands": [
             "google_test = google.apputils.setup_command:GoogleTest",
             ],
@@ -56,8 +65,8 @@ setup(
             ],
         },
 
-    install_requires = REQUIRE,
-    tests_require = REQUIRE + ["mox>=0.5"],
+    install_requires=REQUIRE,
+    tests_require=REQUIRE + TEST_REQUIRE,
 
     # The entry_points above allow other projects to understand the
     # google_test command and test_dir option by specifying
@@ -66,10 +75,10 @@ setup(
     # tests for this project before it is installed. So we need to manually set
     # up the command and option mappings, for this project only, and we use
     # a wrapper class that exists before the install happens.
-    cmdclass = {"google_test": GoogleTestWrapper},
-    command_options = {"google_test": {"test_dir": ("setup.py", "tests")}},
+    cmdclass={"google_test": GoogleTestWrapper},
+    command_options={"google_test": {"test_dir": ("setup.py", "tests")}},
 
-    author = "Google Inc.",
+    author="Google Inc.",
     author_email="opensource@google.com",
     url="http://code.google.com/p/google-apputils-python",
     )
