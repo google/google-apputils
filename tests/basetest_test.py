@@ -19,11 +19,14 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 
 import os
 import re
+import string
 import sys
 import unittest
 
 import gflags as flags
 from google.apputils import basetest
+
+PY_VERSION_2 = sys.version_info[0] == 2
 
 FLAGS = flags.FLAGS
 
@@ -31,6 +34,16 @@ flags.DEFINE_integer('testid', 0, 'Which test to run')
 
 
 class GoogleTestBaseUnitTest(basetest.TestCase):
+
+  def setUp(self):
+    self._orig_test_diff = os.environ.pop('TEST_DIFF', None)
+    self.data1_file = os.path.join(FLAGS.test_tmpdir, 'provided_1.dat')
+    self.data2_file = os.path.join(FLAGS.test_tmpdir, 'provided_2.dat')
+
+  def tearDown(self):
+    if self._orig_test_diff is not None:
+      os.environ['TEST_DIFF'] = self._orig_test_diff
+
   def testCapturing(self):
     basetest.CaptureTestStdout()
     basetest.CaptureTestStderr()
@@ -41,8 +54,8 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
 
     stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
     stdout_file = open(stdout_filename, 'wb')
-    stdout_file.write('This goes to captured.out\n'
-                      'This goes to captured.out\n')
+    stdout_file.write(b'This goes to captured.out\n'
+                      b'This goes to captured.out\n')
     stdout_file.close()
     basetest.DiffTestStdout(stdout_filename)
 
@@ -59,9 +72,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
 
     stderr_filename = os.path.join(FLAGS.test_tmpdir, 'stderr.diff')
     stderr_file = open(stderr_filename, 'wb')
-    stderr_file.write('This goes to captured.err\n'
-                      'This goes to captured.err\n'
-                      'This goes to captured.err\n')
+    stderr_file.write(b'This goes to captured.err\n'
+                      b'This goes to captured.err\n'
+                      b'This goes to captured.err\n')
     stderr_file.close()
 
     # After DiffTestStderr(), the standard error is no longer captured and
@@ -76,10 +89,94 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     sys.stdout.write('Correct Output\n')
     stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
     stdout_file = open(stdout_filename, 'wb')
-    stdout_file.write('Incorrect Output\n')
+    stdout_file.write(b'Incorrect Output\n')
     stdout_file.close()
     self.assertRaises(basetest.OutputDifferedError, basetest.DiffTestStdout,
                       stdout_filename)
+
+  def test_Diff_SameData(self):
+    """Tests for the internal _Diff method."""
+    basetest._WriteTestData('a\nb\n', self.data1_file)
+    basetest._WriteTestData('a\nb\n', self.data2_file)
+    # This must not raise an exception:
+    basetest._Diff(self.data1_file, self.data2_file)
+
+  @unittest.skipIf(not os.path.exists('/usr/bin/diff'),
+                   'requires /usr/bin/diff')
+  def test_Diff_SameData_ExternalDiff(self):
+    """Test the internal _Diff method when TEST_DIFF is in the env."""
+    os.environ['TEST_DIFF'] = '/usr/bin/diff'
+    basetest._WriteTestData('b\n', self.data1_file)
+    basetest._WriteTestData('b\n', self.data2_file)
+    # This must not raise an exception:
+    basetest._Diff(self.data1_file, self.data2_file)
+
+  @unittest.skipIf(not os.path.exists('/usr/bin/diff'),
+                   'requires /usr/bin/diff')
+  def test_Diff_MissingFile_ExternalDiff(self):
+    """Test the internal _Diff method on TEST_DIFF error."""
+    os.environ['TEST_DIFF'] = '/usr/bin/diff'
+    basetest._WriteTestData('a\n', self.data1_file)
+    if os.path.exists(self.data2_file):
+      os.unlink(self.data2_file)  # Be 100% sure this does not exist.
+    # This depends on /usr/bin/diff returning an exit code greater than 1
+    # when an input file is missing.  It has had this behavior forever.
+    with self.assertRaises(basetest.DiffFailureError) as error_context:
+      basetest._Diff(self.data1_file, self.data2_file)
+
+  def test_Diff_MissingExternalDiff(self):
+    """Test the internal _Diff when TEST_DIFF program is non-existant."""
+    os.environ['TEST_DIFF'] = self.data1_file
+    if os.path.exists(self.data1_file):
+      os.unlink(self.data1_file)  # Be 100% sure this does not exist
+    with self.assertRaises(basetest.DiffFailureError) as error_context:
+      basetest._Diff(self.data2_file, self.data2_file)
+
+  def test_Diff_Exception(self):
+    """Test that _Diff includes the delta in the error msg."""
+    basetest._WriteTestData(b'01: text A\n02: text B\n03: C', self.data1_file)
+    basetest._WriteTestData(b'01: text A\n02: zzzzzz\n03: C', self.data2_file)
+
+    with self.assertRaises(basetest.OutputDifferedError) as error_context:
+      basetest._Diff(self.data1_file, self.data2_file)
+
+    # Check that both filenames and some semblance of a unified diff
+    # are present in the exception error message.
+    diff_error_message = str(error_context.exception)
+    self.assertIn('provided_1', diff_error_message)
+    self.assertIn('provided_2', diff_error_message)
+    self.assertIn('@@', diff_error_message)
+    self.assertIn('02: text B', diff_error_message)
+
+  @unittest.skipIf(not os.path.exists('/usr/bin/diff'),
+                   'requires /usr/bin/diff')
+  def test_Diff_Exception_ExternalDiff(self):
+    """Test that _Diff executes TEST_DIFF when supplied and there are diffs."""
+    os.environ['TEST_DIFF'] = '/usr/bin/diff'
+    basetest._WriteTestData(b'01: text A\n02: text B\n03: C', self.data1_file)
+    basetest._WriteTestData(b'01: text A\n02: zzzzzz\n03: C', self.data2_file)
+
+    with self.assertRaises(basetest.OutputDifferedError) as error_context:
+      basetest._Diff(self.data1_file, self.data2_file)
+
+    # Check that both filenames and the TEST_DIFF command
+    # are present in the exception error message.
+    diff_error_message = str(error_context.exception)
+    self.assertIn('/usr/bin/diff', diff_error_message)
+    self.assertIn('provided_1', diff_error_message)
+    self.assertIn('provided_2', diff_error_message)
+
+  def testDiffTestStrings(self):
+    basetest.DiffTestStrings('a', 'a')
+    with self.assertRaises(basetest.OutputDifferedError):
+      basetest.DiffTestStrings(
+          '-2: a message\n-2: another message\n',
+          '-2: a message\n-2: another message \n')
+    self.assertRaises(basetest.DiffFailureError, basetest.DiffTestStringFile,
+                      'a message', 'txt.a message not existant file here')
+    self.assertRaises(basetest.OutputDifferedError, basetest.DiffTestStringFile,
+                      'message', os.devnull)
+
 
   def testFlags(self):
     if FLAGS.testid == 1:
@@ -158,7 +255,11 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
 
     # Test that sequences of unhashable objects can be tested for sameness:
     self.assertSameElements([[1, 2], [3, 4]], [[3, 4], [1, 2]])
-    self.assertSameElements([{'a': 1}, {'b': 2}], [{'b': 2}, {'a': 1}])
+    if PY_VERSION_2:
+      # dict's are no longer valid for < comparison in Python 3 making them
+      # unsortable (yay, sanity!).  But we need to preserve this old behavior
+      # when running under Python 2.
+      self.assertSameElements([{'a': 1}, {'b': 2}], [{'b': 2}, {'a': 1}])
     self.assertRaises(AssertionError, self.assertSameElements, [[1]], [[2]])
 
   def testAssertDictEqual(self):
@@ -181,11 +282,19 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     self.assertRaises(AssertionError, self.assertDictEqual, 1, 1)
 
     try:
+      # Ensure we use equality as the sole measure of elements, not type, since
+      # that is consistent with dict equality.
+      self.assertDictEqual({1: 1L, 2: 2}, {1: 1, 2: 3})
+    except AssertionError, e:
+      self.assertMultiLineEqual('{1: 1L, 2: 2} != {1: 1, 2: 3}\n'
+                                'repr() of differing entries:\n2: 2 != 3\n',
+                                str(e))
+
+    try:
       self.assertDictEqual({}, {'x': 1})
     except AssertionError, e:
       self.assertMultiLineEqual("{} != {'x': 1}\n"
-                                "- {}\n"
-                                "+ {'x': 1}",
+                                "Missing entries:\n'x': 1\n",
                                 str(e))
     else:
       self.fail('Expecting AssertionError')
@@ -193,26 +302,109 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     try:
       self.assertDictEqual({}, {'x': 1}, 'a message')
     except AssertionError, e:
-      self.assertEqual("{} != {'x': 1}\n"
-                       "- {}\n"
-                       "+ {'x': 1} : a message", str(e))
+      self.assertIn('a message', str(e))
     else:
       self.fail('Expecting AssertionError')
 
+    expected = {'a': 1, 'b': 2, 'c': 3}
+    seen = {'a': 2, 'c': 3, 'd': 4}
     try:
-      self.assertDictEqual({'a': 1, 'b': 2, 'c': 3},
-                           {'a': 2, 'c': 3, 'd': 4})
+      self.assertDictEqual(expected, seen)
     except AssertionError, e:
-      self.assertMultiLineEqual(
-          '\n'.join(["{'a': 1, 'c': 3, 'b': 2} != {'a': 2, 'c': 3, 'd': 4}",
-                     "- {'a': 1, 'b': 2, 'c': 3}",
-                     "+ {'a': 2, 'c': 3, 'd': 4}"]),
-          str(e))
+      self.assertMultiLineEqual("""\
+{'a': 1, 'b': 2, 'c': 3} != {'a': 2, 'c': 3, 'd': 4}
+Unexpected, but present entries:
+'b': 2
+
+repr() of differing entries:
+'a': 1 != 2
+
+Missing entries:
+'d': 4
+""", str(e))
     else:
       self.fail('Expecting AssertionError')
 
     self.assertRaises(AssertionError, self.assertDictEqual, (1, 2), {})
     self.assertRaises(AssertionError, self.assertDictEqual, {}, (1, 2))
+
+    # Ensure deterministic output of keys in dictionaries whose sort order
+    # doesn't match the lexical ordering of repr -- this is most Python objects,
+    # which are keyed by memory address.
+    class Obj(object):
+
+      def __init__(self, name):
+        self.name = name
+
+      def __repr__(self):
+        return self.name
+
+    try:
+      self.assertDictEqual(
+          {'a': Obj('A'), Obj('b'): Obj('B'), Obj('c'): Obj('C')},
+          {'a': Obj('A'), Obj('d'): Obj('D'), Obj('e'): Obj('E')})
+    except AssertionError, e:
+      # Do as best we can not to be misleading when objects have the same repr
+      # but aren't equal.
+      self.assertMultiLineEqual("""\
+{'a': A, b: B, c: C} != {'a': A, d: D, e: E}
+Unexpected, but present entries:
+b: B
+c: C
+
+repr() of differing entries:
+'a': A != A
+
+Missing entries:
+d: D
+e: E
+""", str(e))
+    else:
+      self.fail('Expecting AssertionError')
+
+    # Confirm that safe_repr, not repr, is being used.
+    class RaisesOnRepr(object):
+
+      def __repr__(self):
+        return 1/0
+
+    try:
+      self.assertDictEqual(
+          {RaisesOnRepr(): RaisesOnRepr()},
+          {RaisesOnRepr(): RaisesOnRepr()}
+          )
+      self.fail('Expected dicts not to match')
+    except AssertionError as e:
+      # Depending on the testing environment, the object may get a __main__
+      # prefix or a basetest_test prefix, so strip that for comparison.
+      error_msg = re.sub(
+          r'( at 0x[^>]+)|__main__\.|basetest_test\.', '', str(e))
+      self.assertEquals("""\
+{<RaisesOnRepr object>: <RaisesOnRepr object>} != \
+{<RaisesOnRepr object>: <RaisesOnRepr object>}
+Unexpected, but present entries:
+<RaisesOnRepr object>: <RaisesOnRepr object>
+
+Missing entries:
+<RaisesOnRepr object>: <RaisesOnRepr object>
+""", error_msg)
+
+    # Confirm that safe_repr, not repr, is being used.
+    class RaisesOnLt(object):
+
+      def __lt__(self):
+        raise TypeError('Object is unordered.')
+
+      def __repr__(self):
+        return '<RaisesOnLt object>'
+
+    try:
+      self.assertDictEqual(
+          {RaisesOnLt(): RaisesOnLt()},
+          {RaisesOnLt(): RaisesOnLt()})
+    except AssertionError as e:
+      self.assertIn('Unexpected, but present entries:\n<RaisesOnLt', str(e))
+      self.assertIn('Missing entries:\n<RaisesOnLt', str(e))
 
   def testAssertSetEqual(self):
     set1 = set()
@@ -371,10 +563,28 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
   def testAssertRegexMatch_badArguments(self):
     self.assertRaisesWithRegexpMatch(
         AssertionError,
-        'regexes is a string; it needs to be a list of strings.',
+        'regexes is a string;.*',
         self.assertRegexMatch, '1.*2', '1 2')
 
+  def testAssertRegexMatch_unicodeVsBytes(self):
+    """Ensure proper utf-8 encoding or decoding happens automatically."""
+    self.assertRegexMatch(u'str', [b'str'])
+    self.assertRegexMatch(b'str', [u'str'])
+
+  def testAssertRegexMatch_unicode(self):
+    self.assertRegexMatch(u'foo str', [u'str'])
+
+  def testAssertRegexMatch_bytes(self):
+    self.assertRegexMatch(b'foo str', [b'str'])
+
+  def testAssertRegexMatch_allTheSameType(self):
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, 'regexes .* same type',
+        self.assertRegexMatch, 'foo str', [b'str', u'foo'])
+
   def testAssertCommandFailsStderr(self):
+    # TODO(user): Gross!  These should use sys.executable instead of
+    # depending on /usr/bin/perl existing.
     self.assertCommandFails(
         ['/usr/bin/perl', '-e', 'die "FAIL";'],
         [r'(.|\n)*FAIL at -e line 1\.'])
@@ -386,7 +596,10 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     self.assertCommandFails([u'false'], [''])
 
   def testAssertCommandFailsWithUnicodeString(self):
-    self.assertCommandFails(u'false', [''])
+    self.assertCommandFails(u'false', [u''])
+
+  def testAssertCommandFailsWithUnicodeStringBytesRegex(self):
+    self.assertCommandFails(u'false', [b''])
 
   def testAssertCommandSucceedsStderr(self):
     expected_re = re.compile(r'(.|\n)*FAIL at -e line 1\.', re.MULTILINE)
@@ -397,8 +610,11 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
         self.assertCommandSucceeds,
         ['/usr/bin/perl', '-e', 'die "FAIL";'])
 
-  def testAssertCommandSucceedsWithMatchingRegexes(self):
-    self.assertCommandSucceeds(['echo', 'SUCCESS'], regexes=['SUCCESS'])
+  def testAssertCommandSucceedsWithMatchingUnicodeRegexes(self):
+    self.assertCommandSucceeds(['echo', 'SUCCESS'], regexes=[u'SUCCESS'])
+
+  def testAssertCommandSucceedsWithMatchingBytesRegexes(self):
+    self.assertCommandSucceeds(['echo', 'SUCCESS'], regexes=[b'SUCCESS'])
 
   def testAssertCommandSucceedsWithNonMatchingRegexes(self):
     expected_re = re.compile(r'Running command', re.MULTILINE)
@@ -646,14 +862,14 @@ test case
 
   def testAssertNotRaisesWithRegexpMatch(self):
     self.assertRaisesWithRegexpMatch(
-        AssertionError, '^Exception not raised$',
+        AssertionError, '^Exception not raised',
         self.assertRaisesWithRegexpMatch, Exception, re.compile('x'),
         lambda: None)
     self.assertRaisesWithRegexpMatch(
-        AssertionError, '^Exception not raised$',
+        AssertionError, '^Exception not raised',
         self.assertRaisesWithRegexpMatch, Exception, 'x', lambda: None)
     self.assertRaisesWithRegexpMatch(
-        AssertionError, '^Exception not raised$',
+        AssertionError, '^Exception not raised',
         self.assertRaisesWithRegexpMatch, Exception, u'x', lambda: None)
 
   def testAssertRaisesWithRegexpMismatch(self):
@@ -702,10 +918,12 @@ test case
     self.assertTotallyOrdered()
     self.assertTotallyOrdered([1])
     self.assertTotallyOrdered([1], [2])
-    self.assertTotallyOrdered([None], [1], [2])
     self.assertTotallyOrdered([1, 1, 1])
-    self.assertTotallyOrdered([1, 1, 1], ['a string'])
     self.assertTotallyOrdered([(1, 1)], [(1, 2)], [(2, 1)])
+    if PY_VERSION_2:
+      # In Python 3 comparing different types of elements is not supported.
+      self.assertTotallyOrdered([None], [1], [2])
+      self.assertTotallyOrdered([1, 1, 1], ['a string'])
 
     # From the docstring.
     class A(object):
@@ -755,14 +973,22 @@ test case
         except AttributeError:
           return NotImplemented
 
-    self.assertTotallyOrdered(
-        [None],  # None should come before everything else.
-        [1],     # Integers sort earlier.
-        [A(1, 'a')],
-        [A(2, 'b')],  # 2 is after 1.
-        [A(3, 'c'), A(3, 'd')],  # The second argument is irrelevant.
-        [A(4, 'z')],
-        ['foo'])  # Strings sort last.
+    if PY_VERSION_2:
+      self.assertTotallyOrdered(
+          [None],  # None should come before everything else.
+          [1],     # Integers sort earlier.
+          [A(1, 'a')],
+          [A(2, 'b')],  # 2 is after 1.
+          [A(3, 'c'), A(3, 'd')],  # The second argument is irrelevant.
+          [A(4, 'z')],
+          ['foo'])  # Strings sort last.
+    else:
+      # Python 3 does not define ordering across different types.
+      self.assertTotallyOrdered(
+          [A(1, 'a')],
+          [A(2, 'b')],  # 2 is after 1.
+          [A(3, 'c'), A(3, 'd')],  # The second argument is irrelevant.
+          [A(4, 'z')])
 
     # Invalid.
     self.assertRaises(AssertionError, self.assertTotallyOrdered, [2], [1])
@@ -802,6 +1028,167 @@ test case
     self.recordProperty('test_property', 'test_value')
     self.assertEquals(self.getRecordedProperties(),
                       {'test_property': 'test_value'})
+
+  def testAssertUrlEqualSame(self):
+    self.assertUrlEqual('http://a', 'http://a')
+    self.assertUrlEqual('http://a/path/test', 'http://a/path/test')
+    self.assertUrlEqual('#fragment', '#fragment')
+    self.assertUrlEqual('http://a/?q=1', 'http://a/?q=1')
+    self.assertUrlEqual('http://a/?q=1&v=5', 'http://a/?v=5&q=1')
+    self.assertUrlEqual('/logs?v=1&a=2&t=labels&f=path%3A%22foo%22',
+                        '/logs?a=2&f=path%3A%22foo%22&v=1&t=labels')
+    self.assertUrlEqual('http://a/path;p1', 'http://a/path;p1')
+    self.assertUrlEqual('http://a/path;p2;p3;p1', 'http://a/path;p1;p2;p3')
+    self.assertUrlEqual('sip:alice@atlanta.com;maddr=239.255.255.1;ttl=15',
+                        'sip:alice@atlanta.com;ttl=15;maddr=239.255.255.1')
+
+  def testAssertUrlEqualDifferent(self):
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a', 'http://b')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a/x', 'http://a:8080/x')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a/x', 'http://a/y')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a/?q=2', 'http://a/?q=1')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a/?q=1&v=5', 'http://a/?v=2&q=1')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a', 'sip://b')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a#g', 'sip://a#f')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://a/path;p1;p3;p1', 'http://a/path;p1;p2;p3')
+
+  def testSameStructure_same(self):
+    self.assertSameStructure(0, 0)
+    self.assertSameStructure(1, 1)
+    self.assertSameStructure('', '')
+    self.assertSameStructure('hello', 'hello', msg='This Should not fail')
+    self.assertSameStructure(set(), set())
+    self.assertSameStructure(set([1, 2]), set([1, 2]))
+    self.assertSameStructure([], [])
+    self.assertSameStructure(['a'], ['a'])
+    self.assertSameStructure({}, {})
+    self.assertSameStructure({'one': 1}, {'one': 1})
+    # int and long should always be treated as the same type.
+    self.assertSameStructure({3L: 3}, {3: 3L})
+
+  def testSameStructure_different(self):
+    # Different type
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        r"a is a <(type|class) 'int'> but b is a <(type|class) 'str'>",
+        self.assertSameStructure, 0, 'hello')
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        r"a is a <(type|class) 'int'> but b is a <(type|class) 'list'>",
+        self.assertSameStructure, 0, [])
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        r"a is a <(type|class) 'int'> but b is a <(type|class) 'float'>",
+        self.assertSameStructure, 2, 2.0)
+
+    # Different scalar values
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, 'a is 0 but b is 1',
+        self.assertSameStructure, 0, 1)
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, "a is 'hello' but b is 'goodbye': This was expected",
+        self.assertSameStructure, 'hello', 'goodbye', msg='This was expected')
+
+    # Different sets are treated without structure
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, r'AA is (set\(\[1\]\)|\{1\}) but BB is set\((\[\])?\)',
+        self.assertSameStructure, set([1]), set(), aname='AA', bname='BB')
+
+    # Different lists
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, 'a has [2] but b does not',
+        self.assertSameStructure, ['x', 'y', 'z'], ['x', 'y'])
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, 'a lacks [2] but b has it',
+        self.assertSameStructure, ['x', 'y'], ['x', 'y', 'z'])
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, "a[2] is 'z' but b[2] is 'Z'",
+        self.assertSameStructure, ['x', 'y', 'z'], ['x', 'y', 'Z'])
+
+    # Different dicts
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, "a has ['two'] but b does not",
+        self.assertSameStructure, {'one': 1, 'two': 2}, {'one': 1})
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, "a lacks ['two'] but b has it",
+        self.assertSameStructure, {'one': 1}, {'one': 1, 'two': 2})
+    self.assertRaisesWithLiteralMatch(
+        AssertionError, "a['two'] is 2 but b['two'] is 3",
+        self.assertSameStructure, {'one': 1, 'two': 2}, {'one': 1, 'two': 3})
+
+    # Deep key generation
+    self.assertRaisesWithLiteralMatch(
+        AssertionError,
+        "a[0][0]['x']['y']['z'][0] is 1 but b[0][0]['x']['y']['z'][0] is 2",
+        self.assertSameStructure,
+        [[{'x': {'y': {'z': [1]}}}]], [[{'x': {'y': {'z': [2]}}}]])
+
+    # Multiple problems
+    self.assertRaisesWithLiteralMatch(
+        AssertionError,
+        'a[0] is 1 but b[0] is 3; a[1] is 2 but b[1] is 4',
+        self.assertSameStructure, [1, 2], [3, 4])
+    self.assertRaisesWithRegexpMatch(
+        AssertionError,
+        re.compile(r"^a\[0] is 'a' but b\[0] is 'A'; .*"
+                   r"a\[18] is 's' but b\[18] is 'S'; \.\.\.$"),
+        self.assertSameStructure,
+        list(string.ascii_lowercase), list(string.ascii_uppercase))
+
+  def testAssertJsonEqualSame(self):
+    self.assertJsonEqual('{"success": true}', '{"success": true}')
+    self.assertJsonEqual('{"success": true}', '{"success":true}')
+    self.assertJsonEqual('true', 'true')
+    self.assertJsonEqual('null', 'null')
+    self.assertJsonEqual('false', 'false')
+    self.assertJsonEqual('34', '34')
+    self.assertJsonEqual('[1, 2, 3]', '[1,2,3]', msg='please PASS')
+    self.assertJsonEqual('{"sequence": [1, 2, 3], "float": 23.42}',
+                         '{"float": 23.42, "sequence": [1,2,3]}')
+    self.assertJsonEqual('{"nest": {"spam": "eggs"}, "float": 23.42}',
+                         '{"float": 23.42, "nest": {"spam":"eggs"}}')
+
+  def testAssertJsonEqualDifferent(self):
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('{"success": true}', '{"success": false}')
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('{"success": false}', '{"Success": false}')
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('false', 'true')
+    with self.assertRaises(AssertionError) as error_context:
+      self.assertJsonEqual('null', '0', msg='I demand FAILURE')
+    self.assertIn('I demand FAILURE', error_context.exception.args[0])
+    self.assertIn('None', error_context.exception.args[0])
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('[1, 0, 3]', '[1,2,3]')
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('{"sequence": [1, 2, 3], "float": 23.42}',
+                           '{"float": 23.42, "sequence": [1,0,3]}')
+    with self.assertRaises(AssertionError):
+      self.assertJsonEqual('{"nest": {"spam": "eggs"}, "float": 23.42}',
+                           '{"float": 23.42, "nest": {"Spam":"beans"}}')
+
+  def testAssertJsonEqualBadJson(self):
+    with self.assertRaises(ValueError) as error_context:
+      self.assertJsonEqual("alhg'2;#", '{"a": true}')
+    self.assertIn('first', error_context.exception.args[0])
+    self.assertIn('alhg', error_context.exception.args[0])
+
+    with self.assertRaises(ValueError) as error_context:
+      self.assertJsonEqual('{"a": true}', "alhg'2;#")
+    self.assertIn('second', error_context.exception.args[0])
+    self.assertIn('alhg', error_context.exception.args[0])
+
+    with self.assertRaises(ValueError) as error_context:
+      self.assertJsonEqual('', '')
 
 
 class GetCommandStderrTestCase(basetest.TestCase):
@@ -885,6 +1272,17 @@ class EqualityAssertionTest(basetest.TestCase):
     def __cmp__(self, other):
       return cmp(self._value, other._value)
 
+  class EqualityTestsWithLtEq(object):
+
+    def __init__(self, value):
+      self._value = value
+
+    def __eq__(self, other):
+      return self._value == other._value
+
+    def __lt__(self, other):
+      return self._value < other._value
+
   def testAllComparisonsFail(self):
     i1 = self.NeverEqual()
     i2 = self.NeverEqual()
@@ -941,21 +1339,25 @@ class EqualityAssertionTest(basetest.TestCase):
     self.assertEqual(same_a, same_b)
     self.assertEquals(same_a, same_b)
     self.failUnlessEqual(same_a, same_b)
-    self.assertEqual(0, cmp(same_a, same_b))
+    if PY_VERSION_2:
+      # Python 3 removes the global cmp function
+      self.assertEqual(0, cmp(same_a, same_b))
 
     self.assertFalse(same_a == different)
     self.assertTrue(same_a != different)
     self.assertNotEqual(same_a, different)
     self.assertNotEquals(same_a, different)
     self.failIfEqual(same_a, different)
-    self.assertNotEqual(0, cmp(same_a, different))
+    if PY_VERSION_2:
+      self.assertNotEqual(0, cmp(same_a, different))
 
     self.assertFalse(same_b == different)
     self.assertTrue(same_b != different)
     self.assertNotEqual(same_b, different)
     self.assertNotEquals(same_b, different)
     self.failIfEqual(same_b, different)
-    self.assertNotEqual(0, cmp(same_b, different))
+    if PY_VERSION_2:
+      self.assertNotEqual(0, cmp(same_b, different))
 
   def testComparisonWithEq(self):
     same_a = self.EqualityTestsWithEq(42)
@@ -969,10 +1371,16 @@ class EqualityAssertionTest(basetest.TestCase):
     different = self.EqualityTestsWithNe(1769)
     self._PerformAppleAppleOrangeChecks(same_a, same_b, different)
 
-  def testComparisonWithCmp(self):
-    same_a = self.EqualityTestsWithCmp(42)
-    same_b = self.EqualityTestsWithCmp(42)
-    different = self.EqualityTestsWithCmp(1769)
+  def testComparisonWithCmpOrLtEq(self):
+    if PY_VERSION_2:
+      # In Python 3; the __cmp__ method is no longer special.
+      cmp_or_lteq_class = self.EqualityTestsWithCmp
+    else:
+      cmp_or_lteq_class = self.EqualityTestsWithLtEq
+
+    same_a = cmp_or_lteq_class(42)
+    same_b = cmp_or_lteq_class(42)
+    different = cmp_or_lteq_class(1769)
     self._PerformAppleAppleOrangeChecks(same_a, same_b, different)
 
 
@@ -980,8 +1388,9 @@ class GoogleTestBasePy24UnitTest(basetest.TestCase):
 
   def RunTestCaseTests(self, test_case_class):
     test_loader = test_case_class._test_loader
-    test_loader.loadTestsFromTestCase(
-        test_case_class).run(unittest.TestResult())
+    test_result = unittest.TestResult()
+    test_loader.loadTestsFromTestCase(test_case_class).run(test_result)
+    return test_result
 
   def testSetUpCalledForEachTestMethod(self):
     self.RunTestCaseTests(SetUpSpy)
@@ -1068,6 +1477,26 @@ class GoogleTestBasePy24UnitTest(basetest.TestCase):
 
     self.assertSequenceEqual(expected_calls,
                              TearDownOrderWatcherBaseClass.calls_made)
+
+  def test_arguments_added_by_decorator(self):
+    """Arguments added to test methods by decorators (ex: mock.patch) should be
+    able to pass through BeforeAfterTestCase meta."""
+    def add_arguments(**kargs):
+      def wrapper(cls):
+        test_main = cls.testMain
+        cls.testMain = lambda self: test_main(self, **kargs)
+        return cls
+      return wrapper
+
+    @add_arguments(named='blah')
+    class TestClass(basetest.TestCase):
+      __metaclass__ = basetest.BeforeAfterTestCaseMeta
+
+      def testMain(self, named):
+        self.assertEqual('blah', named)
+
+    result = self.RunTestCaseTests(TestClass)
+    self.assertTrue(result.wasSuccessful())
 
 
 class StubPrefixedTestMethodsTestCase(basetest.TestCase):
@@ -1316,7 +1745,7 @@ class AssertSequenceStartsWithTest(basetest.TestCase):
 
   def testWholeNotASequence(self):
     msg = ('For whole: len\(5\) is not supported, it appears to be type: '
-           '<type \'int\'>')
+           '<(type|class) \'int\'>')
     self.assertRaisesWithRegexpMatch(AssertionError, msg,
                                      self.assertSequenceStartsWith, self.a, 5)
 
@@ -1360,5 +1789,7 @@ class InitNotNecessaryForAssertsTest(basetest.TestCase):
       pass
 
     Subclass().assertEquals({}, {})
+
+
 if __name__ == '__main__':
   basetest.main()

@@ -273,4 +273,28 @@ def main(argv):
   appcommands.AddCmd('test', test)
 appcommands.Run()" test || die "Test 62 failed"
 
+# Success, default command set and correctly run.
+RES=`$PYTHON -c "${IMPORTS}
+class test(appcommands.Cmd):
+  def Run(self, argv):
+    print 'test running correctly'
+    return 0
+def main(argv):
+  appcommands.AddCmd('test', test)
+appcommands.SetDefaultCommand('test')
+appcommands.Run()"` || die "Test 63 failed"
+
+echo "${RES}" | grep -q "test running correctly" || die "Test 64 failed"
+
+# Failure, default command set but missing.
+$PYTHON -c "${IMPORTS}
+class test(appcommands.Cmd):
+  def Run(self, argv):
+    print 'test running correctly'
+    return 0
+def main(argv):
+  appcommands.AddCmd('test', test)
+appcommands.SetDefaultCommand('missing')
+appcommands.Run()" >/dev/null 2>&1 && die "Test 65 failed"
+
 echo "PASS"

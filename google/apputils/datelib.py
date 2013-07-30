@@ -28,6 +28,7 @@ import re
 import sys
 import time
 import types
+import warnings
 
 from dateutil import parser
 import pytz
@@ -46,6 +47,18 @@ def SecondsToMicroseconds(seconds):
     microseconds
   """
   return seconds * _MICROSECONDS_PER_SECOND
+
+
+def MicrosecondsToSeconds(microseconds):
+  """Convert microseconds to seconds.
+
+  Args:
+    microseconds: A number representing some duration of time measured in
+      microseconds.
+  Returns:
+    A number representing the same duration of time measured in seconds.
+  """
+  return microseconds / _MICROSECONDS_PER_SECOND_F
 
 
 def _GetCurrentTimeMicros():
@@ -79,6 +92,71 @@ def GetTimeMicros(time_tuple):
     The number of microseconds since the epoch represented by the input tuple.
   """
   return int(SecondsToMicroseconds(GetSecondsSinceEpoch(time_tuple)))
+
+
+def DatetimeToUTCMicros(date):
+  """Converts a datetime object to microseconds since the epoch in UTC.
+
+  Args:
+    date: A datetime to convert.
+  Returns:
+    The number of microseconds since the epoch, in UTC, represented by the input
+    datetime.
+  """
+  # Using this guide: http://wiki.python.org/moin/WorkingWithTime
+  # And this conversion guide: http://docs.python.org/library/time.html
+
+  # Turn the date parameter into a tuple (struct_time) that can then be
+  # manipulated into a long value of seconds.  During the conversion from
+  # struct_time to long, the source date in UTC, and so it follows that the
+  # correct transformation is calendar.timegm()
+  micros = calendar.timegm(date.utctimetuple()) * _MICROSECONDS_PER_SECOND
+  return micros + date.microsecond
+
+
+def DatetimeToUTCMillis(date):
+  """Converts a datetime object to milliseconds since the epoch in UTC.
+
+  Args:
+    date: A datetime to convert.
+  Returns:
+    The number of milliseconds since the epoch, in UTC, represented by the input
+    datetime.
+  """
+  return DatetimeToUTCMicros(date) / 1000
+
+
+def UTCMicrosToDatetime(micros, tz=None):
+  """Converts a microsecond epoch time to a datetime object.
+
+  Args:
+    micros: A UTC time, expressed in microseconds since the epoch.
+    tz: The desired tzinfo for the datetime object. If None, the
+        datetime will be naive.
+  Returns:
+    The datetime represented by the input value.
+  """
+  # The conversion from micros to seconds for input into the
+  # utcfromtimestamp function needs to be done as a float to make sure
+  # we dont lose the sub-second resolution of the input time.
+  dt = datetime.datetime.utcfromtimestamp(
+      micros / _MICROSECONDS_PER_SECOND_F)
+  if tz is not None:
+    dt = tz.fromutc(dt)
+  return dt
+
+
+def UTCMillisToDatetime(millis, tz=None):
+  """Converts a millisecond epoch time to a datetime object.
+
+  Args:
+    millis: A UTC time, expressed in milliseconds since the epoch.
+    tz: The desired tzinfo for the datetime object. If None, the
+        datetime will be naive.
+  Returns:
+    The datetime represented by the input value.
+  """
+  return UTCMicrosToDatetime(millis * 1000, tz)
 
 
 UTC = pytz.UTC
@@ -378,10 +456,14 @@ class Timestamp(BaseTimestamp):
     Args:
       timestring: string with datetime
       tz: optional timezone, if timezone is omitted from timestring.
+
     Returns:
-      New Timestamp.
+      New Timestamp or None if unable to parse the timestring.
     """
-    r = parser.parse(timestring)
+    try:
+      r = parser.parse(timestring)
+    except ValueError:
+      return None
     if not r.tzinfo:
       r = (tz or cls.LocalTimezone).localize(r)
     result = cls(r.year, r.month, r.day, r.hour, r.minute, r.second,
@@ -391,19 +473,40 @@ class Timestamp(BaseTimestamp):
 
   @classmethod
   def _IntStringToInterval(cls, timestring):
-    """Parse interval date specification and create a timedelta object."""
-    return datetime.timedelta(seconds=ConvertIntervalToSeconds(timestring))
+    """Parse interval date specification and create a timedelta object.
+
+    Args:
+      timestring: string interval.
+
+    Returns:
+      A datetime.timedelta representing the specified interval or None if
+      unable to parse the timestring.
+    """
+    seconds = ConvertIntervalToSeconds(timestring)
+    return datetime.timedelta(seconds=seconds) if seconds else None
 
   @classmethod
   def FromString(cls, value, tz=None):
-    """Try to create a Timestamp from a string."""
-    val = cls._StringToTime(value, tz)
-    if val:
-      return val
+    """Create a Timestamp from a string.
 
-    val = cls._IntStringToInterval(value)
-    if val:
-      return cls.utcnow() - val
+    Args:
+      value: String interval or datetime.
+          e.g. "2013-01-05 13:00:00" or "1d"
+      tz: optional timezone, if timezone is omitted from timestring.
+
+    Returns:
+      A new Timestamp.
+
+    Raises:
+      TimeParseError if unable to parse value.
+    """
+    result = cls._StringToTime(value, tz=tz)
+    if result:
+      return result
+
+    result = cls._IntStringToInterval(value)
+    if result:
+      return cls.utcnow() - result
 
     raise TimeParseError(value)
 

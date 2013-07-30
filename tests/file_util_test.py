@@ -36,7 +36,7 @@ import gflags as flags
 FLAGS = flags.FLAGS
 
 # pylint is dumb about mox:
-# pylint:disable-msg=E1101
+# pylint: disable=no-member
 
 
 class FileUtilTest(basetest.TestCase):
@@ -63,11 +63,8 @@ class FileUtilTempdirTest(basetest.TestCase):
   def testWriteOverwrite(self):
     file_util.Write(self.file_path, 'original contents')
     file_util.Write(self.file_path, self.sample_contents)
-    fp = open(self.file_path)
-    try:
+    with open(self.file_path) as fp:
       self.assertEquals(fp.read(), self.sample_contents)
-    finally:
-      fp.close()
 
   def testWriteExclusive(self):
     file_util.Write(self.file_path, 'original contents')
@@ -82,11 +79,8 @@ class FileUtilTempdirTest(basetest.TestCase):
 
   def testAtomicWriteSuccessful(self):
     file_util.AtomicWrite(self.file_path, self.sample_contents)
-    fp = open(self.file_path)
-    try:
+    with open(self.file_path) as fp:
       self.assertEquals(fp.read(), self.sample_contents)
-    finally:
-      fp.close()
 
   def testAtomicWriteMode(self):
     mode = 0745
@@ -125,10 +119,35 @@ class FileUtilMoxTest(FileUtilMoxTestBase):
     file_handle = self.mox.CreateMockAnything()
     self.mox.StubOutWithMock(__builtin__, 'open', use_mock_anything=True)
     open(self.file_path).AndReturn(file_handle)
+    file_handle.__enter__().AndReturn(file_handle)
     file_handle.read().AndReturn(self.sample_contents)
-    file_handle.close()
+    file_handle.__exit__(None, None, None)
+
     self.mox.ReplayAll()
-    self.assertEquals(file_util.Read(self.file_path), self.sample_contents)
+    try:
+      self.assertEquals(file_util.Read(self.file_path), self.sample_contents)
+      self.mox.VerifyAll()
+    finally:
+      # Because we mock out the built-in open() function, which the unittest
+      # library depends on, we need to make sure we revert it before leaving the
+      # test, otherwise any test failures will cause further internal failures
+      # and yield no meaningful error output.
+      self.mox.ResetAll()
+      self.mox.UnsetStubs()
+
+  def testWriteGroup(self):
+    self.mox.StubOutWithMock(os, 'open')
+    self.mox.StubOutWithMock(os, 'write')
+    self.mox.StubOutWithMock(os, 'close')
+    self.mox.StubOutWithMock(os, 'chown')
+    gid = 'new gid'
+    os.open(self.file_path, os.O_WRONLY | os.O_TRUNC | os.O_CREAT,
+            0666).AndReturn(self.fd)
+    os.write(self.fd, self.sample_contents)
+    os.close(self.fd)
+    os.chown(self.file_path, -1, gid)
+    self.mox.ReplayAll()
+    file_util.Write(self.file_path, self.sample_contents, gid=gid)
     self.mox.VerifyAll()
 
 
@@ -143,6 +162,7 @@ class AtomicWriteMoxTest(FileUtilMoxTestBase):
     self.mox.StubOutWithMock(os, 'rename')
     self.mox.StubOutWithMock(os, 'remove')
     self.mode = 'new permissions'
+    self.gid = 'new gid'
     self.temp_filename = '/some/temp/file'
     self.os_error = OSError('A problem renaming!')
 
@@ -154,6 +174,25 @@ class AtomicWriteMoxTest(FileUtilMoxTestBase):
 
   def tearDown(self):
     self.mox.UnsetStubs()
+
+  def testAtomicWriteGroup(self):
+    self.mox.StubOutWithMock(os, 'chown')
+    os.chown(self.temp_filename, -1, self.gid)
+    os.rename(self.temp_filename, self.file_path)
+    self.mox.ReplayAll()
+    file_util.AtomicWrite(self.file_path, self.sample_contents,
+                          mode=self.mode, gid=self.gid)
+    self.mox.VerifyAll()
+
+  def testAtomicWriteGroupError(self):
+    self.mox.StubOutWithMock(os, 'chown')
+    os.chown(self.temp_filename, -1, self.gid).AndRaise(self.os_error)
+    os.remove(self.temp_filename)
+    self.mox.ReplayAll()
+    self.assertRaises(OSError, file_util.AtomicWrite, self.file_path,
+                      self.sample_contents, mode=self.mode, gid=self.gid)
+
+    self.mox.VerifyAll()
 
   def testRenamingError(self):
     os.rename(self.temp_filename, self.file_path).AndRaise(self.os_error)
@@ -171,7 +210,7 @@ class AtomicWriteMoxTest(FileUtilMoxTestBase):
     try:
       file_util.AtomicWrite(self.file_path, self.sample_contents,
                             mode=self.mode)
-    except OSError, e:
+    except OSError as e:
       self.assertEquals(str(e),
                         'A problem renaming!. Additional errors cleaning up: '
                         'A problem removing!')
@@ -180,10 +219,23 @@ class AtomicWriteMoxTest(FileUtilMoxTestBase):
     self.mox.VerifyAll()
 
 
+class TemporaryFilesMoxTest(FileUtilMoxTestBase):
+
+  def testTemporaryFileWithContents(self):
+    contents = 'Inspiration!'
+    with file_util.TemporaryFileWithContents(contents) as temporary_file:
+      filename = temporary_file.name
+      contents_read = open(temporary_file.name).read()
+      self.assertEqual(contents_read, contents)
+
+    # Ensure that the file does not exist.
+    self.assertFalse(os.path.exists(filename))
+
+
 class MkDirsMoxTest(FileUtilMoxTestBase):
 
   # pylint is dumb about mox:
-  # pylint:disable-msg=E1103
+  # pylint: disable=maybe-no-member
 
   def setUp(self):
     super(MkDirsMoxTest, self).setUp()
@@ -320,9 +372,11 @@ class RmDirsTestCase(mox.MoxTestBase):
     test_dir = os.path.join(test_sandbox, 'test', 'dir')
 
     os.makedirs(test_sandbox)
-    open(os.path.join(test_sandbox, 'file'), 'w').close()
+    with open(os.path.join(test_sandbox, 'file'), 'w'):
+      pass
     os.makedirs(test_dir)
-    open(os.path.join(test_dir, 'file'), 'w')
+    with open(os.path.join(test_dir, 'file'), 'w'):
+      pass
 
     file_util.RmDirs(test_dir)
 

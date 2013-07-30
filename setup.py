@@ -50,10 +50,9 @@ class GoogleTestWrapper(test.test, object):
 
 setup(
     name="google-apputils",
-    version="0.3.0",
+    version="0.4.0",
     packages=find_packages(exclude=["tests"]),
-    namespace_packages=find_packages(exclude=["tests"]),
-    scripts=["ez_setup.py"],
+    namespace_packages=["google"],
     entry_points={
         "distutils.commands": [
             "google_test = google.apputils.setup_command:GoogleTest",

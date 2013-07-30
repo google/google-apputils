@@ -257,10 +257,13 @@ def main(argv): print 'FAIL'
 app.run()
 " --help 2>&1 |
     fgrep '>%@<' >/dev/null ||
-    die "Test 32 failed"
+    die "Test 30 failed"
 
-
-echo "PASS"
+readonly HELP_PROG="
+from ${APP_PACKAGE} import app
+def main(argv): print 'HI'
+app.run()
+"
 
 
 echo "PASS"

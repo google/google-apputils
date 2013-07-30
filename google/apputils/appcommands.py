@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+#
 # Copyright 2007 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +32,9 @@ for commands that derive from class Cmd and the AddCmdFunc() is used
 to wrap simple functions.
 
 This module itself registers the command 'help' that allows users
-to retrieve help for all or specific commands.
+to retrieve help for all or specific commands.  'help' is the default
+command executed if no command is expressed, unless a different default
+command is set with SetDefaultCommand.
 
 Example:
 
@@ -136,6 +139,7 @@ class AppCommandsError(Exception):
 _cmd_argv = None        # remaining arguments with index 0 = sys.argv[0]
 _cmd_list = {}          # list of commands index by name (_Cmd instances)
 _cmd_alias_list = {}    # list of command_names index by command_alias
+_cmd_default = 'help'   # command to execute if none explicitly given
 
 
 def GetAppBasename():
@@ -158,14 +162,14 @@ def ShortHelpAndExit(message=None):
 
 def GetCommandList():
   """Return list of registered commands."""
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_list
   return _cmd_list
 
 
 def GetCommandAliasList():
   """Return list of registered command aliases."""
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_alias_list
   return _cmd_alias_list
 
@@ -277,10 +281,7 @@ class Cmd(object):
       try:
         argv = ParseFlagsWithUsage(argv)
         # Run command
-        if FLAGS.run_with_pdb:
-          ret = pdb.runcall(self.Run, argv)
-        else:
-          ret = self.Run(argv)
+        ret = self.Run(argv)
         if ret is None:
           ret = 0
         else:
@@ -288,6 +289,11 @@ class Cmd(object):
         return ret
       except app.UsageError, error:
         app.usage(shorthelp=1, detailed_error=error, exitcode=error.exitcode)
+      except:
+        if FLAGS.pdb_post_mortem:
+          traceback.print_exc()
+          pdb.post_mortem()
+        raise
     finally:
       # Restore app.usage and remove this command's flags from the global flags.
       app.usage = orig_app_usage
@@ -411,7 +417,7 @@ def _AddCmdInstance(command_name, cmd, command_aliases=None):
                       '_'.
   """
   # Update global command list.
-  # pylint: disable-msg=W0602
+  # pylint: disable=global-variable-not-assigned
   global _cmd_list
   global _cmd_alias_list
   if not issubclass(cmd.__class__, Cmd):
@@ -640,7 +646,10 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
   # Show the command help (none, one specific, or all)
   for name in cmd_names:
     command = GetCommandByName(name)
-    cmd_help = command.CommandGetHelp(GetCommandArgv(), cmd_names=cmd_names)
+    try:
+      cmd_help = command.CommandGetHelp(GetCommandArgv(), cmd_names=cmd_names)
+    except Exception as error:
+      cmd_help = "Internal error for command '%s': %s." % (name, str(error))
     cmd_help = cmd_help.strip()
     all_names = ', '.join([name] + (command.CommandGetAliases() or []))
     if len(all_names) + 1 >= len(prefix) or not cmd_help:
@@ -661,7 +670,7 @@ def AppcommandsUsage(shorthelp=0, writeto_stdout=0, detailed_error=None,
     if len(cmd_names) == 1:
       # Need to register flags for command prior to be able to use them.
       # We do not register them globally so that they do not reappear.
-      # pylint: disable-msg=W0212
+      # pylint: disable=protected-access
       cmd_flags = command._command_flags
       if cmd_flags.RegisteredFlags():
         stdfile.write('%sFlags for %s:\n' % (prefix, name))
@@ -694,7 +703,7 @@ def ParseFlagsWithUsage(argv):
     remaining command line arguments after parsing flags
   """
   # Update the global commands.
-  # pylint: disable-msg=W0603
+  # pylint: disable=global-statement
   global _cmd_argv
   try:
     _cmd_argv = FLAGS(argv)
@@ -715,7 +724,7 @@ def GetCommand(command_required):
     specified but that command does not exist.
   """
   # Update the global commands.
-  # pylint: disable-msg=W0603
+  # pylint: disable=global-statement
   global _cmd_argv
   _cmd_argv = ParseFlagsWithUsage(_cmd_argv)
   if len(_cmd_argv) < 2:
@@ -729,15 +738,27 @@ def GetCommand(command_required):
   return command
 
 
-def _CommandsStart():
+def SetDefaultCommand(default_command):
+  """Change the default command to execute if none is explicitly given.
+
+  Args:
+    default_command: str, the name of the command to execute by default.
+  """
+  # pylint: disable=global-statement,g-bad-name
+  global _cmd_default
+  _cmd_default = default_command
+
+
+def _CommandsStart(unused_argv):
   """Main initialization.
 
-  This initializes flag values, and calls __main__.main().  Only non-flag
-  arguments are passed to main().  The return value of main() is used as the
-  exit status.
+  Calls __main__.main(), and then the command indicated by the first
+  non-flag argument, or 'help' if no argument was given.  (The command
+  to execute if no flag is given can be changed via SetDefaultCommand).
 
+  Only non-flag arguments are passed to main(). If main does not call
+  sys.exit, the return value of the command is used as the exit status.
   """
-  app.RegisterAndParseFlagsWithUsage()
   # The following is supposed to return after registering additional commands
   try:
     sys.modules['__main__'].main(GetCommandArgv())
@@ -751,7 +772,9 @@ def _CommandsStart():
   if len(GetCommandArgv()) > 1:
     command = GetCommand(command_required=True)
   else:
-    command = GetCommandByName('help')
+    command = GetCommandByName(_cmd_default)
+    if command is None:
+      ShortHelpAndExit("FATAL Command '%s' unknown" % _cmd_default)
   sys.exit(command.CommandRun(GetCommandArgv()))
 
 
@@ -764,7 +787,11 @@ def Run():
     app.run()
   """
   app.parse_flags_with_usage = ParseFlagsWithUsage
-  app.really_start = _CommandsStart
+  original_really_start = app.really_start
+
+  def InterceptReallyStart():
+    original_really_start(main=_CommandsStart)
+  app.really_start = InterceptReallyStart
   app.usage = _ReplacementAppUsage
   return app.run()
 
