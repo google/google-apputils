@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-#
 # Copyright 2007 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,26 +30,25 @@ flags.DEFINE_string('hint', '', 'Global hint to show in commands')
 
 # Name taken from app.py
 class Test1(appcommands.Cmd):
-  """Help for test1."""
+  """Help for test1. As described by a docstring."""
 
   def __init__(self, name, flag_values, **kargs):
     """Init and register flags specific to command."""
-    appcommands.Cmd.__init__(self, name, flag_values=flag_values, **kargs)
-    # self._all_commands_help allows you to define a different message to be
-    # displayed when all commands are displayed vs. the single command.
-    self._all_commands_help = ''
+    super(Test1, self).__init__(name, flag_values, **kargs)
     # Flag --fail1 is specific to this command
     flags.DEFINE_boolean('fail1', False, 'Make test1 fail',
                          flag_values=flag_values)
     flags.DEFINE_string('foo', '', 'Param foo', flag_values=flag_values)
     flags.DEFINE_string('bar', '', 'Param bar', flag_values=flag_values)
     flags.DEFINE_integer('intfoo', 0, 'Integer foo', flag_values=flag_values)
+    flags.DEFINE_boolean('allhelp', False, 'Get _all_commands_help string',
+                         flag_values=flag_values)
 
-  def Run(self, argv):
+  def Run(self, unused_argv):
     """Output 'Command1' and flag info.
 
     Args:
-      argv: Remaining command line arguments after parsing flags and command
+      unused_argv: Remaining arguments after parsing flags and command
 
     Returns:
       Value of flag fail1
@@ -60,25 +58,27 @@ class Test1(appcommands.Cmd):
       print "Hint1:'%s'" % FLAGS.hint
     print "Foo1:'%s'" % FLAGS.foo
     print "Bar1:'%s'" % FLAGS.bar
+    if FLAGS.allhelp:
+      print "AllHelp:'%s'" % self._all_commands_help
     return FLAGS.fail1 * 1
 
 
 class Test2(appcommands.Cmd):
   """Help for test2."""
 
-  def __init__(self, name, flag_values):
+  def __init__(self, name, flag_values, **kargs):
     """Init and register flags specific to command."""
-    appcommands.Cmd.__init__(self, name, flag_values)
+    super(Test2, self).__init__(name, flag_values, **kargs)
     flags.DEFINE_boolean('fail2', False, 'Make test2 fail',
                          flag_values=flag_values)
     flags.DEFINE_string('foo', '', 'Param foo', flag_values=flag_values)
     flags.DEFINE_string('bar', '', 'Param bar', flag_values=flag_values)
 
-  def Run(self, argv):
+  def Run(self, unused_argv):
     """Output 'Command2' and flag info.
 
     Args:
-      argv: Remaining command line arguments after parsing flags and command
+      unused_argv: Remaining arguments after parsing flags and command
 
     Returns:
       Value of flag fail2
@@ -103,12 +103,17 @@ def Test4(unused_argv):
 
 def main(unused_argv):
   """Register the commands."""
-  appcommands.AddCmd('test1', Test1, command_aliases=['testalias1',
-                                                      'testalias2'])
+  appcommands.AddCmd('test1', Test1,
+                     command_aliases=['testalias1', 'testalias2'])
+  appcommands.AddCmd('test1b', Test1,
+                     command_aliases=['testalias1b', 'testalias2b'],
+                     all_commands_help='test1b short help', help_full="""test1b
+                     is my very favorite test
+                     because it has verbose help messages""")
   appcommands.AddCmd('test2', Test2)
   appcommands.AddCmdFunc('test3', Test3)
   appcommands.AddCmdFunc('test4', Test4, command_aliases=['testalias3'],
-                         all_commands_help='')
+                         all_commands_help='replacetest4help')
 
 
 if __name__ == '__main__':

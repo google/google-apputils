@@ -47,6 +47,7 @@ class FileUtilTest(basetest.TestCase):
     self.assertEqual(file_util.HomeDir('root'), pwd.getpwnam('root').pw_dir)
 
 
+
 class FileUtilTempdirTest(basetest.TestCase):
 
   def setUp(self):
@@ -230,6 +231,29 @@ class TemporaryFilesMoxTest(FileUtilMoxTestBase):
 
     # Ensure that the file does not exist.
     self.assertFalse(os.path.exists(filename))
+
+
+class TemporaryDirsMoxTest(FileUtilMoxTestBase):
+
+  def testTemporaryDirectoryWithException(self):
+    def Inner(accumulator):
+      with file_util.TemporaryDirectory(base_path=FLAGS.test_tmpdir) as tmpdir:
+        self.assertTrue(os.path.isdir(tmpdir))
+        accumulator.append(tmpdir)
+        raise Exception('meh')
+
+    temp_dirs = []
+    self.assertRaises(Exception, Inner, temp_dirs)
+    # Ensure that the directory is removed on exit even when exceptions happen.
+    self.assertEquals(len(temp_dirs), 1)
+    self.assertFalse(os.path.isdir(temp_dirs[0]))
+
+  def testTemporaryDirectory(self):
+    with file_util.TemporaryDirectory(base_path=FLAGS.test_tmpdir) as temp_dir:
+      self.assertTrue(os.path.isdir(temp_dir))
+
+    # Ensure that the directory is removed on exit.
+    self.assertFalse(os.path.isdir(temp_dir))
 
 
 class MkDirsMoxTest(FileUtilMoxTestBase):

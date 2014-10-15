@@ -53,14 +53,6 @@ SPECIAL_PLURALS = {
 
 VOWELS = frozenset('AEIOUaeiou')
 
-# In Python 2.6, int(float('nan')) intentionally raises a TypeError. This code
-# attempts to futureproof us against that eventual upgrade.
-try:
-  _IsNan = math.isnan
-except AttributeError:
-  def _IsNan(x):
-    return type(x) is float and x != x
-
 
 def Commas(value):
   """Formats an integer with thousands-separating commas.
@@ -91,7 +83,7 @@ def Plural(quantity, singular, plural=None):
     quantity: An integer.
     singular: A string, the singular form of a noun.
     plural: A string, the plural form.  If not specified, then simple
-      English rules of regular pluralization will be used.
+        English rules of regular pluralization will be used.
 
   Returns:
     A string.
@@ -106,7 +98,7 @@ def PluralWord(quantity, singular, plural=None):
     quantity: An integer.
     singular: A string, the singular form of a noun.
     plural: A string, the plural form.  If not specified, then simple
-      English rules of regular pluralization will be used.
+        English rules of regular pluralization will be used.
 
   Returns:
     the plural form of the word.
@@ -161,6 +153,7 @@ def AddIndefiniteArticle(noun):
 
   Args:
     noun: A string representing a noun.
+
   Returns:
     A string containing noun prefixed with an indefinite article, e.g.,
     "a thing" or "an object".
@@ -181,6 +174,8 @@ def DecimalPrefix(quantity, unit, precision=1, min_scale=0, max_scale=None):
   is less than 10**27).  For example:
 
     DecimalPrefix(576012, 'bps') -> '576 kbps'
+    DecimalPrefix(576012, '') -> '576 k'
+    DecimalPrefix(576, '') -> '576'
     DecimalPrefix(1574215, 'bps', 2) -> '1.6 Mbps'
 
   Only the SI prefixes which are powers of 10**3 will be used, so
@@ -191,13 +186,16 @@ def DecimalPrefix(quantity, unit, precision=1, min_scale=0, max_scale=None):
 
   Args:
     quantity: A number.
-    unit: A string.
+    unit: A string, the dimension for quantity, with no multipliers (e.g.
+        "bps").  If quantity is dimensionless, the empty string.
     precision: An integer, the minimum number of digits to display.
     min_scale: minimum power of 1000 to scale to, (None = unbounded).
     max_scale: maximum power of 1000 to scale to, (None = unbounded).
 
   Returns:
-    A string.
+    A string, composed by the decimal (scaled) representation of quantity at the
+    required precision, possibly followed by a space, the appropriate multiplier
+    and the unit.
   """
   return _Prefix(quantity, unit, precision, DecimalScale, min_scale=min_scale,
                  max_scale=max_scale)
@@ -211,17 +209,21 @@ def BinaryPrefix(quantity, unit, precision=1):
   is less than 2**90).  For example:
 
     BinaryPrefix(576012, 'B') -> '562 KiB'
+    BinaryPrefix(576012, '') -> '562 Ki'
 
   See also:
     DecimalPrefix()
 
   Args:
     quantity: A number.
-    unit: A string.
+    unit: A string, the dimension for quantity, with no multipliers (e.g.
+        "B").  If quantity is dimensionless, the empty string.
     precision: An integer, the minimum number of digits to display.
 
   Returns:
-    A string.
+    A string, composed by the decimal (scaled) representation of quantity at the
+    required precision, possibly followed by a space, the appropriate multiplier
+    and the unit.
   """
   return _Prefix(quantity, unit, precision, BinaryScale)
 
@@ -231,7 +233,8 @@ def _Prefix(quantity, unit, precision, scale_callable, **args):
 
   Args:
     quantity: A number.
-    unit: A string.
+    unit: A string, the dimension for quantity, with no multipliers (e.g.
+        "bps").  If quantity is dimensionless, the empty string.
     precision: An integer, the minimum number of digits to display.
     scale_callable: A callable, scales the number and units.
     **args: named arguments passed to scale_callable.
@@ -239,18 +242,30 @@ def _Prefix(quantity, unit, precision, scale_callable, **args):
   Returns:
     A string.
   """
-  if not quantity:
-    return '0 %s' % unit
+  separator = ' ' if unit else ''
 
-  if quantity in [float('inf'), float('-inf')] or _IsNan(quantity):
-    return '%f %s' % (quantity, unit)
+  if not quantity:
+    return '0%s%s' % (separator, unit)
+
+  if quantity in [float('inf'), float('-inf')] or math.isnan(quantity):
+    return '%f%s%s' % (quantity, separator, unit)
 
   scaled_quantity, scaled_unit = scale_callable(quantity, unit, **args)
 
-  print_pattern = '%%.%df %%s' % max(0, (precision - int(
+  if scaled_unit:
+    separator = ' '
+
+  print_pattern = '%%.%df%%s%%s' % max(0, (precision - int(
       math.log(abs(scaled_quantity), 10)) - 1))
 
-  return print_pattern % (scaled_quantity, scaled_unit)
+  return print_pattern % (scaled_quantity, separator, scaled_unit)
+
+
+# Prefixes and corresponding min_scale and max_scale for decimal formating.
+DECIMAL_PREFIXES = ('y', 'z', 'a', 'f', 'p', 'n', u'µ', 'm',
+                    '', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
+DECIMAL_MIN_SCALE = -8
+DECIMAL_MAX_SCALE = 8
 
 
 def DecimalScale(quantity, unit, min_scale=0, max_scale=None):
@@ -269,17 +284,13 @@ def DecimalScale(quantity, unit, min_scale=0, max_scale=None):
     A tuple of a scaled quantity (float) and BinaryPrefix for the
     units (string).
   """
-  if min_scale is None or min_scale < 0:
-    negative_powers = ('m', u'µ', 'n', 'p', 'f', 'a', 'z', 'y')
-    if min_scale is not None:
-      negative_powers = tuple(negative_powers[0:-min_scale])
-  else:
-    negative_powers = None
-  if max_scale is None or max_scale > 0:
-    powers = ('k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
-    if max_scale is not None:
-      powers = tuple(powers[0:max_scale])
-  return _Scale(quantity, unit, 1000, powers, negative_powers)
+  if min_scale is None or min_scale < DECIMAL_MIN_SCALE:
+    min_scale = DECIMAL_MIN_SCALE
+  if max_scale is None or max_scale > DECIMAL_MAX_SCALE:
+    max_scale = DECIMAL_MAX_SCALE
+  powers = DECIMAL_PREFIXES[
+      min_scale - DECIMAL_MIN_SCALE:max_scale - DECIMAL_MIN_SCALE + 1]
+  return _Scale(quantity, unit, 1000, powers, min_scale)
 
 
 def BinaryScale(quantity, unit):
@@ -299,7 +310,7 @@ def BinaryScale(quantity, unit):
                 ('Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi', 'Yi'))
 
 
-def _Scale(quantity, unit, multiplier, prefixes, inverse_prefixes=None):
+def _Scale(quantity, unit, multiplier, prefixes=None, min_scale=None):
   """Returns the formatted quantity and unit into a tuple.
 
   Args:
@@ -307,30 +318,26 @@ def _Scale(quantity, unit, multiplier, prefixes, inverse_prefixes=None):
     unit: A string
     multiplier: An integer, the ratio between prefixes.
     prefixes: A sequence of strings.
-    inverse_prefixes: Prefixes to use for negative powers,
-        If empty or None, no scaling is done for fractions.
+        If empty or None, no scaling is done.
+    min_scale: minimum power of multiplier corresponding to the first prefix.
+        If None assumes prefixes are for positive powers only.
+
   Returns:
-    A tuple containing the raw scaled quantity and the prefixed unit.
+    A tuple containing the raw scaled quantity (float) and the prefixed unit.
   """
+  if (not prefixes or not quantity or math.isnan(quantity) or
+      quantity in [float('inf'), float('-inf')]):
+    return float(quantity), unit
 
-  if not quantity:
-    return 0, unit
-
-  if quantity in [float('inf'), float('-inf')] or _IsNan(quantity):
-    return quantity, unit
-
-  power = int(math.log(abs(quantity), multiplier))
-  if abs(quantity) > 1 or not inverse_prefixes:
-    if power < 1:
-      return quantity, unit
-    power = min(power, len(prefixes))
-    prefix = prefixes[power - 1]
-    value = float(quantity) / multiplier ** power
-  else:
-    power = min(-power + 1, len(inverse_prefixes))
-    prefix = inverse_prefixes[power - 1]
-    value = quantity * multiplier ** power
-
+  if min_scale is None:
+    min_scale = 0
+    prefixes = ('',) + tuple(prefixes)
+  value, prefix = quantity, ''
+  for power, prefix in enumerate(prefixes, min_scale):
+    # This is more numerically accurate than '/ multiplier ** power'.
+    value = float(quantity) * multiplier ** -power
+    if abs(value) < multiplier:
+      break
   return value, prefix + unit
 
 # Contains the fractions where the full range [1/n ... (n - 1) / n]
@@ -453,3 +460,48 @@ def NaturalSortKey(data):
     if value.isdigit():
       segments[i] = int(value)
   return segments
+
+
+def UnixTimestamp(unix_ts, tz):
+  """Format a UNIX timestamp into a human-readable string.
+
+  Args:
+    unix_ts: UNIX timestamp (number of seconds since epoch). May be a floating
+        point number.
+    tz: datetime.tzinfo object, timezone to use when formatting. Typical uses
+        might want to rely on datelib or pytz to provide the tzinfo object, e.g.
+        use datelib.UTC, datelib.US_PACIFIC, or pytz.timezone('Europe/Dublin').
+
+  Returns:
+    Formatted string like '2013-11-17 11:08:27.720000 PST'.
+  """
+  date_time = datetime.datetime.fromtimestamp(unix_ts, tz)
+  return date_time.strftime('%Y-%m-%d %H:%M:%S.%f %Z')
+
+
+def AddOrdinalSuffix(value):
+  """Adds an ordinal suffix to a non-negative integer (e.g. 1 -> '1st').
+
+  Args:
+    value: A non-negative integer.
+
+  Returns:
+    A string containing the integer with a two-letter ordinal suffix.
+  """
+  if value < 0 or value != int(value):
+    raise ValueError('argument must be a non-negative integer: %s' % value)
+
+  if value % 100 in (11, 12, 13):
+    suffix = 'th'
+  else:
+    rem = value % 10
+    if rem == 1:
+      suffix = 'st'
+    elif rem == 2:
+      suffix = 'nd'
+    elif rem == 3:
+      suffix = 'rd'
+    else:
+      suffix = 'th'
+
+  return str(value) + suffix

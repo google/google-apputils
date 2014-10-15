@@ -40,6 +40,16 @@ $EXE --testid=5 || die "Test 5 failed" $?
 # Test assertAlmostEqual and assertNotAlmostEqual
 $EXE --testid=6 || die "Test 6 failed" $?
 
+# Test that tests marked as "expected failure" but which passes
+# cause an overall failure.
+$EXE --testid=7 && die "Test 7 passed unexpectedly" $?
+output=$($EXE --testid=8 -- -v 2>&1) && die "Test 8 passed unexpectedly" $?
+printf '%s\n' "$output"
+grep '^FAILED (expected failures=1, unexpected successes=1)' <<<"$output" \
+  && grep '^testDifferentExpectedFailure .* unexpected success' <<<"$output" \
+  && grep '^testExpectedFailure .* expected failure' <<<"$output" \
+  || die "Test 8 didn't write expected diagnostic"
+
 # Invoke with no env vars and no flags
 (
 unset TEST_RANDOM_SEED

@@ -28,14 +28,16 @@ import itertools
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import types
+import unittest
 import urlparse
 
 try:
-  import faulthandler
+  import faulthandler  # pylint: disable=g-import-not-at-top
 except ImportError:
   # //testing/pybase:pybase can't have deps on any extension modules as it
   # is used by code that is executed in such a way it cannot import them. :(
@@ -43,15 +45,7 @@ except ImportError:
   # or from the Python 3.3+ standard library).
   faulthandler = None
 
-# unittest2 is a backport of Python 2.7's unittest for Python 2.6, so
-# we don't need it if we are running 2.7 or newer.
-
-if sys.version_info < (2, 7):
-  import unittest2 as unittest
-else:
-  import unittest
-
-from google.apputils import app
+from google.apputils import app  # pylint: disable=g-import-not-at-top
 import gflags as flags
 from google.apputils import shellutil
 
@@ -71,6 +65,7 @@ def _GetDefaultTestRandomSeed():
 
 
 def _GetDefaultTestTmpdir():
+  """Get default test temp dir."""
   tmpdir = os.environ.get('TEST_TMPDIR', '')
   if not tmpdir:
     tmpdir = os.path.join(tempfile.gettempdir(), 'google_apputils_basetest')
@@ -92,211 +87,34 @@ flags.DEFINE_string('test_tmpdir', _GetDefaultTestTmpdir(),
                     allow_override=1)
 
 
-class BeforeAfterTestCaseMeta(type):
+# We might need to monkey-patch TestResult so that it stops considering an
+# unexpected pass as a as a "successful result".  For details, see
+# http://bugs.python.org/issue20165
+def _MonkeyPatchTestResultForUnexpectedPasses():
+  """Workaround for <http://bugs.python.org/issue20165>."""
 
-  """Adds setUpTestCase() and tearDownTestCase() methods.
+  # pylint: disable=g-doc-return-or-yield,g-doc-args,g-wrong-blank-lines
 
-  These may be needed for setup and teardown of shared fixtures usually because
-  such fixtures are expensive to setup and teardown (eg Perforce clients).  When
-  using such fixtures, care should be taken to keep each test as independent as
-  possible (eg via the use of sandboxes).
+  def wasSuccessful(self):
+    """Tells whether or not this result was a success.
 
-  Example:
+    Any unexpected pass is to be counted as a non-success.
+    """
+    return (len(self.failures) == len(self.errors) ==
+            len(self.unexpectedSuccesses) == 0)
 
-    class MyTestCase(basetest.TestCase):
+  # pylint: enable=g-doc-return-or-yield,g-doc-args,g-wrong-blank-lines
 
-      __metaclass__ = basetest.BeforeAfterTestCaseMeta
+  test_result = unittest.result.TestResult()
+  test_result.addUnexpectedSuccess('test')
+  if test_result.wasSuccessful():  # The bug is present.
+    unittest.result.TestResult.wasSuccessful = wasSuccessful
+    if test_result.wasSuccessful():  # Warn the user if our hot-fix failed.
+      sys.stderr.write('unittest.result.TestResult monkey patch to report'
+                       ' unexpected passes as failures did not work.\n')
 
-      @classmethod
-      def setUpTestCase(cls):
-        cls._resource = foo.ReallyExpensiveResource()
 
-      @classmethod
-      def tearDownTestCase(cls):
-        cls._resource.Destroy()
-
-      def testSomething(self):
-        self._resource.Something()
-        ...
-  """
-
-  _test_loader = unittest.defaultTestLoader
-
-  def __init__(cls, name, bases, dict):
-    super(BeforeAfterTestCaseMeta, cls).__init__(name, bases, dict)
-
-    # Notes from mtklein
-
-    # This code can be tricky to think about.  Here are a few things to remember
-    # as you read through it.
-
-    # When inheritance is involved, this __init__ is called once on each class
-    # in the inheritance chain when that class is defined.  In a typical
-    # scenario where a BaseClass inheriting from TestCase declares the
-    # __metaclass__ and SubClass inherits from BaseClass, __init__ will be first
-    # called with cls=BaseClass when BaseClass is defined, and then called later
-    # with cls=SubClass when SubClass is defined.
-
-    # To know when to call setUpTestCase and tearDownTestCase, this class wraps
-    # the setUp, tearDown, and test* methods in a TestClass.  We'd like to only
-    # wrap those methods in the leaves of the inheritance tree, but we can't
-    # know when we're a leaf at wrapping time.  So instead we wrap all the
-    # setUp, tearDown, and test* methods, but code them so that we only do the
-    # counting we want at the leaves, which we *can* detect when we've got an
-    # actual instance to look at --- i.e. self, when a method is running.
-
-    # Because we're wrapping at every level of inheritance, some methods get
-    # wrapped multiple times down the inheritance chain; if SubClass were to
-    # inherit, say, setUp or testFoo from BaseClass, that method would be
-    # wrapped twice, first by BaseClass then by SubClass.  That's OK, because we
-    # ensure that the extra code we inject with these wrappers is idempotent.
-
-    # test_names are the test methods this class can see.
-    test_names = set(cls._test_loader.getTestCaseNames(cls))
-
-    # Each class keeps a set of the tests it still has to run.  When it's empty,
-    # we know we should call tearDownTestCase.  For now, it holds the sentinel
-    # value of None, acting as a indication that we need to call setUpTestCase,
-    # which fills in the actual tests to run.
-    cls.__tests_to_run = None
-
-    # These calls go through and monkeypatch various methods, in no particular
-    # order.
-    BeforeAfterTestCaseMeta.SetSetUpAttr(cls, test_names)
-    BeforeAfterTestCaseMeta.SetTearDownAttr(cls)
-    BeforeAfterTestCaseMeta.SetTestMethodAttrs(cls, test_names)
-    BeforeAfterTestCaseMeta.SetBeforeAfterTestCaseAttr()
-
-  # Just a little utility function to help with monkey-patching.
-  @staticmethod
-  def SetMethod(cls, method_name, replacement):
-    """Like setattr, but also preserves name, doc, and module metadata."""
-    original = getattr(cls, method_name)
-    replacement.__name__ = original.__name__
-    replacement.__doc__ = original.__doc__
-    replacement.__module__ = original.__module__
-    setattr(cls, method_name, replacement)
-
-  @staticmethod
-  def SetSetUpAttr(cls, test_names):
-    """Wraps setUp() with per-class setUp() functionality."""
-    # Remember that SetSetUpAttr is eventually called on each class in the
-    # inheritance chain.  This line can be subtle because of inheritance.  Say
-    # we've got BaseClass that defines setUp, and SubClass inheriting from it
-    # that doesn't define setUp.  This method will run twice, and both times
-    # cls_setUp will be BaseClass.setUp.  This is one of the tricky cases where
-    # setUp will be wrapped multiple times.
-    cls_setUp = cls.setUp
-
-    # We create a new setUp method that first checks to see if we need to run
-    # setUpTestCase (looking for the __tests_to_run==None flag), and then runs
-    # the original setUp method.
-    def setUp(self):
-      """Function that will encapsulate and replace cls.setUp()."""
-      # This line is unassuming but crucial to making this whole system work.
-      # It sets leaf to the class of the instance we're currently testing.  That
-      # is, leaf is going to be a leaf class.  It's not necessarily the same
-      # class as the parameter cls that's being passed in.  For example, in the
-      # case above where setUp is in BaseClass, when we instantiate a SubClass
-      # and call setUp, we need leaf to be pointing at the class SubClass.
-      leaf = self.__class__
-
-      # The reason we want to do this is that it makes sure setUpTestCase is
-      # only run once, not once for each class down the inheritance chain.  When
-      # multiply-wrapped, this extra code is called multiple times.  In the
-      # running example:
-      #
-      #  1) cls=BaseClass: replace BaseClass' setUp with a wrapped setUp
-      #  2) cls=SubClass: set SubClass.setUp to what it thinks was its original
-      #     setUp --- the wrapped setUp from 1)
-      #
-      # So it's double-wrapped, but that's OK.  When we actually call setUp from
-      # an instance, we're calling the double-wrapped method.  It sees
-      # __tests_to_run is None and fills that in.  Then it calls what it thinks
-      # was its original setUp, the singly-wrapped setUp from BaseClass.  The
-      # singly-wrapped setUp *skips* the if-statement, as it sees
-      # leaf.__tests_to_run is not None now.  It just runs the real, original
-      # setUp().
-
-      # test_names is passed in from __init__, and holds all the test cases that
-      # cls can see.  In the BaseClass call, that's probably the empty set, and
-      # for SubClass it'd have your test methods.
-
-      if leaf.__tests_to_run is None:
-        leaf.__tests_to_run = set(test_names)
-        self.setUpTestCase()
-      cls_setUp(self)
-
-    # Monkeypatch our new setUp method into the place of the original.
-    BeforeAfterTestCaseMeta.SetMethod(cls, 'setUp', setUp)
-
-  @staticmethod
-  def SetTearDownAttr(cls):
-    """Wraps tearDown() with per-class tearDown() functionality."""
-
-    # This is analagous to SetSetUpAttr, except of course it's patching tearDown
-    # to run tearDownTestCase when there are no more tests to run.  All the same
-    # hairy logic applies.
-    cls_tearDown = cls.tearDown
-
-    def tearDown(self):
-      """Function that will encapsulate and replace cls.tearDown()."""
-      cls_tearDown(self)
-
-      leaf = self.__class__
-      # We need to make sure that tearDownTestCase is only run when
-      # we're executing this in the leaf class, so we need the
-      # explicit leaf == cls check below.
-      if (leaf.__tests_to_run is not None
-          and not leaf.__tests_to_run
-          and leaf == cls):
-        leaf.__tests_to_run = None
-        self.tearDownTestCase()
-
-    BeforeAfterTestCaseMeta.SetMethod(cls, 'tearDown', tearDown)
-
-  @staticmethod
-  def SetTestMethodAttrs(cls, test_names):
-    """Makes each test method first remove itself from the remaining set."""
-    # This makes each test case remove itself from the set of remaining tests.
-    # You might think that this belongs more logically in tearDown, and I'd
-    # agree except that tearDown doesn't know what test case it's tearing down!
-    # Instead we have the test method itself remove itself before attempting the
-    # test.
-
-    # Note that having the test remove itself after running doesn't work, as we
-    # never get to 'after running' for tests that fail.
-
-    # Like setUp and tearDown, the test case could conceivably be wrapped
-    # twice... but as noted it's an implausible situation to have an actual test
-    # defined in a base class.  Just in case, we take the same precaution by
-    # looking in only the leaf class' set of __tests_to_run, and using discard()
-    # instead of remove() to make the operation idempotent.
-
-    # The closure here makes sure that each new test() function remembers its
-    # own values of cls_test and test_name.  Without this, they'd all point to
-    # the values from the last iteration of the loop, causing some arbitrary
-    # test method to run multiple times and the others never. :(
-    def test_closure(cls_test, test_name):
-      def test(self, *args, **kargs):
-        leaf = self.__class__
-        leaf.__tests_to_run.discard(test_name)
-        return cls_test(self, *args, **kargs)
-      return test
-
-    for test_name in test_names:
-      cls_test = getattr(cls, test_name)
-
-      BeforeAfterTestCaseMeta.SetMethod(
-          cls, test_name, test_closure(cls_test, test_name))
-
-  @staticmethod
-  def SetBeforeAfterTestCaseAttr():
-    # This just makes sure every TestCase has a setUpTestCase or
-    # tearDownTestCase, so that you can safely define only one or neither of
-    # them if you want.
-    TestCase.setUpTestCase = lambda self: None
-    TestCase.tearDownTestCase = lambda self: None
+_MonkeyPatchTestResultForUnexpectedPasses()
 
 
 class TestCase(unittest.TestCase):
@@ -331,6 +149,46 @@ class TestCase(unittest.TestCase):
     if doc_first_line is not None:
       desc = '\n'.join((desc, doc_first_line))
     return desc
+
+  def assertStartsWith(self, actual, expected_start):
+    """Assert that actual.startswith(expected_start) is True.
+
+    Args:
+      actual: str
+      expected_start: str
+    """
+    if not actual.startswith(expected_start):
+      self.fail('%r does not start with %r' % (actual, expected_start))
+
+  def assertNotStartsWith(self, actual, unexpected_start):
+    """Assert that actual.startswith(unexpected_start) is False.
+
+    Args:
+      actual: str
+      unexpected_start: str
+    """
+    if actual.startswith(unexpected_start):
+      self.fail('%r does start with %r' % (actual, unexpected_start))
+
+  def assertEndsWith(self, actual, expected_end):
+    """Assert that actual.endswith(expected_end) is True.
+
+    Args:
+      actual: str
+      expected_end: str
+    """
+    if not actual.endswith(expected_end):
+      self.fail('%r does not end with %r' % (actual, expected_end))
+
+  def assertNotEndsWith(self, actual, unexpected_end):
+    """Assert that actual.endswith(unexpected_end) is False.
+
+    Args:
+      actual: str
+      unexpected_end: str
+    """
+    if actual.endswith(unexpected_end):
+      self.fail('%r does end with %r' % (actual, unexpected_end))
 
   def assertSequenceStartsWith(self, prefix, whole, msg=None):
     """An equality assertion for the beginning of ordered sequences.
@@ -386,9 +244,86 @@ class TestCase(unittest.TestCase):
       msg = missing_msg
     self.fail(msg)
 
+  def assertNoCommonElements(self, expected_seq, actual_seq, msg=None):
+    """Checks whether actual iterable and expected iterable are disjoint."""
+    common = set(expected_seq) & set(actual_seq)
+    if not common:
+      return
+
+    common_msg = 'Common elements %s\nExpected: %s\nActual: %s' % (
+        common, expected_seq, actual_seq)
+    if msg:
+      msg += ': %s' % common_msg
+    else:
+      msg = common_msg
+    self.fail(msg)
+
   # TODO(user): Provide an assertItemsEqual method when our super class
   # does not provide one.  That method went away in Python 3.2 (renamed
   # to assertCountEqual, or is that different? investigate).
+
+  def assertItemsEqual(self, *args, **kwargs):
+    # pylint: disable=g-doc-args
+    """An unordered sequence specific comparison.
+
+    It asserts that actual_seq and expected_seq have the same element counts.
+    Equivalent to::
+
+        self.assertEqual(Counter(iter(actual_seq)),
+                         Counter(iter(expected_seq)))
+
+    Asserts that each element has the same count in both sequences.
+    Example:
+        - [0, 1, 1] and [1, 0, 1] compare equal.
+        - [0, 0, 1] and [0, 1] compare unequal.
+
+    Args:
+      expected_seq: A sequence containing elements we are expecting.
+      actual_seq: The sequence that we are testing.
+      msg: The message to be printed if the test fails.
+    """
+    # pylint: enable=g-doc-args
+    # In Python 3k this method is called assertCountEqual()
+    if sys.version_info.major > 2:
+      self.assertItemsEqual = super(TestCase, self).assertCountEqual
+      self.assertItemsEqual(*args, **kwargs)
+      return
+    # For Python 2.x we must check for the issue below
+    super_assert_items_equal = super(TestCase, self).assertItemsEqual
+    try:
+      super_assert_items_equal([23], [])  # Force a fail to check behavior.
+    except self.failureException as error_to_introspect:
+      if 'First has 0, Second has 1:  23' in str(error_to_introspect):
+        # It exhibits http://bugs.python.org/issue14832
+        # Always use our repaired method that swaps the arguments.
+        self.assertItemsEqual = self._FixedAssertItemsEqual
+      else:
+        # It exhibits correct behavior. Always use the super's method.
+        self.assertItemsEqual = super_assert_items_equal
+      # Delegate this call to the correct method. All future calls will skip
+      # this error patching code.
+      self.assertItemsEqual(*args, **kwargs)
+    assert 'Impossible: TestCase assertItemsEqual is broken.'
+
+  def _FixedAssertItemsEqual(self, expected_seq, actual_seq, msg=None):
+    """A version of assertItemsEqual that works around issue14832."""
+    super(TestCase, self).assertItemsEqual(actual_seq, expected_seq, msg=msg)
+
+  def assertCountEqual(self, *args, **kwargs):
+    # pylint: disable=g-doc-args
+    """An unordered sequence specific comparison.
+
+    Equivalent to assertItemsEqual(). This method is a compatibility layer
+    for Python 3k, since 2to3 does not convert assertItemsEqual() calls into
+    assertCountEqual() calls.
+
+    Args:
+      expected_seq: A sequence containing elements we are expecting.
+      actual_seq: The sequence that we are testing.
+      msg: The message to be printed if the test fails.
+    """
+    # pylint: enable=g-doc-args
+    self.assertItemsEqual(*args, **kwargs)
 
   def assertSameElements(self, expected_seq, actual_seq, msg=None):
     """Assert that two sequences have the same elements (in any order).
@@ -411,6 +346,14 @@ class TestCase(unittest.TestCase):
     # removed in favor of assertItemsEqual. As there's a unit test
     # that explicitly checks this behavior, I am leaving this method
     # alone.
+    # Fail on strings: empirically, passing strings to this test method
+    # is almost always a bug. If comparing the character sets of two strings
+    # is desired, cast the inputs to sets or lists explicitly.
+    if (isinstance(expected_seq, basestring) or
+        isinstance(actual_seq, basestring)):
+      self.fail('Passing a string to assertSameElements is usually a bug. '
+                'Did you mean to use assertEqual?\n'
+                'Expected: %s\nActual: %s' % (expected_seq, actual_seq))
     try:
       expected = dict([(element, None) for element in expected_seq])
       actual = dict([(element, None) for element in actual_seq])
@@ -463,6 +406,7 @@ class TestCase(unittest.TestCase):
     self.assert_(maxv >= value, msg)
 
   def assertRegexMatch(self, actual_str, regexes, message=None):
+    # pylint: disable=g-doc-bad-indent
     """Asserts that at least one regex in regexes matches str.
 
     If possible you should use assertRegexpMatches, which is a simpler
@@ -494,6 +438,7 @@ class TestCase(unittest.TestCase):
         See "Notes" above for detailed notes on how this is interpreted.
       message:  The message to be printed if the test fails.
     """
+    # pylint: enable=g-doc-bad-indent
     if isinstance(regexes, basestring):
       self.fail('regexes is a string; use assertRegexpMatches instead.')
     if not regexes:
@@ -595,9 +540,27 @@ class TestCase(unittest.TestCase):
                 _QuoteLongString(err),
                 regexes)))
 
+  class _AssertRaisesContext(object):
+
+    def __init__(self, expected_exception, test_case, test_func):
+      self.expected_exception = expected_exception
+      self.test_case = test_case
+      self.test_func = test_func
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc_value, tb):
+      if exc_type is None:
+        self.test_case.fail(self.expected_exception.__name__ + ' not raised')
+      if not issubclass(exc_type, self.expected_exception):
+        return False
+      self.test_func(exc_value)
+      return True
+
   def assertRaisesWithPredicateMatch(self, expected_exception, predicate,
-                                     callable_obj, *args,
-                                     **kwargs):
+                                     callable_obj=None, *args, **kwargs):
+    # pylint: disable=g-doc-args
     """Asserts that exception is thrown and predicate(exception) is true.
 
     Args:
@@ -607,46 +570,69 @@ class TestCase(unittest.TestCase):
       callable_obj: Function to be called.
       args: Extra args.
       kwargs: Extra keyword args.
+
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception as err:
+    # pylint: enable=g-doc-args
+    def Check(err):
       self.assert_(predicate(err),
                    '%r does not match predicate %r' % (err, predicate))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
+
+    context = self._AssertRaisesContext(expected_exception, self, Check)
+    if callable_obj is None:
+      return context
+    with context:
+      callable_obj(*args, **kwargs)
 
   def assertRaisesWithLiteralMatch(self, expected_exception,
-                                   expected_exception_message, callable_obj,
-                                   *args, **kwargs):
+                                   expected_exception_message,
+                                   callable_obj=None, *args, **kwargs):
+    # pylint: disable=g-doc-args
     """Asserts that the message in a raised exception equals the given string.
 
-    Unlike assertRaisesWithRegexpMatch this method takes a literal string, not
+    Unlike assertRaisesRegexp, this method takes a literal string, not
     a regular expression.
+
+    with self.assertRaisesWithLiteralMatch(ExType, 'message'):
+      DoSomething()
 
     Args:
       expected_exception: Exception class expected to be raised.
       expected_exception_message: String message expected in the raised
         exception.  For a raise exception e, expected_exception_message must
         equal str(e).
-      callable_obj: Function to be called.
+      callable_obj: Function to be called, or None to return a context.
       args: Extra args.
       kwargs: Extra kwargs.
+
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    try:
-      callable_obj(*args, **kwargs)
-    except expected_exception as err:
+    # pylint: enable=g-doc-args
+    def Check(err):
       actual_exception_message = str(err)
       self.assert_(expected_exception_message == actual_exception_message,
                    'Exception message does not match.\n'
                    'Expected: %r\n'
                    'Actual: %r' % (expected_exception_message,
                                    actual_exception_message))
-    else:
-      self.fail(expected_exception.__name__ + ' not raised')
+
+    context = self._AssertRaisesContext(expected_exception, self, Check)
+    if callable_obj is None:
+      return context
+    with context:
+      callable_obj(*args, **kwargs)
 
   def assertRaisesWithRegexpMatch(self, expected_exception, expected_regexp,
-                                  callable_obj, *args, **kwargs):
+                                  callable_obj=None, *args, **kwargs):
+    # pylint: disable=g-doc-args
     """Asserts that the message in a raised exception matches the given regexp.
 
     This is just a wrapper around assertRaisesRegexp. Please use
@@ -656,18 +642,20 @@ class TestCase(unittest.TestCase):
       expected_exception: Exception class expected to be raised.
       expected_regexp: Regexp (re pattern object or string) expected to be
         found in error message.
-      callable_obj: Function to be called.
+      callable_obj: Function to be called, or None to return a context.
       args: Extra args.
       kwargs: Extra keyword args.
+
+    Returns:
+      A context manager if callable_obj is None. Otherwise, None.
+
+    Raises:
+      self.failureException if callable_obj does not raise a macthing exception.
     """
-    # TODO(user): this is a good candidate for a global
-    # search-and-replace.
-    self.assertRaisesRegexp(
-        expected_exception,
-        expected_regexp,
-        callable_obj,
-        *args,
-        **kwargs)
+    # pylint: enable=g-doc-args
+    # TODO(user): this is a good candidate for a global search-and-replace.
+    return self.assertRaisesRegexp(expected_exception, expected_regexp,
+                                   callable_obj, *args, **kwargs)
 
   def assertContainsInOrder(self, strings, target):
     """Asserts that the strings provided are found in the target in order.
@@ -695,7 +683,34 @@ class TestCase(unittest.TestCase):
       last_string = string
       current_index = index
 
+  def assertContainsSubsequence(self, container, subsequence):
+    """Assert that "container" contains "subsequence" as a subsequence.
+
+    Asserts that big_list contains all the elements of small_list, in order, but
+    possibly with other elements interspersed. For example, [1, 2, 3] is a
+    subsequence of [0, 0, 1, 2, 0, 3, 0] but not of [0, 0, 1, 3, 0, 2, 0].
+
+    Args:
+      container: the list we're testing for subsequence inclusion.
+      subsequence: the list we hope will be a subsequence of container.
+    """
+    first_nonmatching = None
+    reversed_container = list(reversed(container))
+    subsequence = list(subsequence)
+
+    for e in subsequence:
+      if e not in reversed_container:
+        first_nonmatching = e
+        break
+      while e != reversed_container.pop():
+        pass
+
+    if first_nonmatching is not None:
+      self.fail('%s not a subsequence of %s. First non-matching element: %s' %
+          (subsequence, container, first_nonmatching))
+
   def assertTotallyOrdered(self, *groups):
+    # pylint: disable=g-doc-args
     """Asserts that total ordering has been implemented correctly.
 
     For example, say you have a class A that compares only on its attribute x.
@@ -721,11 +736,11 @@ class TestCase(unittest.TestCase):
     self.assertTotallyOrdered(
       [None],  # None should come before everything else.
       [1],     # Integers sort earlier.
-      ['foo'],  # As do strings.
       [A(1, 'a')],
       [A(2, 'b')],  # 2 is after 1.
-      [A(2, 'c'), A(2, 'd')],  # The second argument is irrelevant.
-      [A(3, 'z')])
+      [A(3, 'c'), A(3, 'd')],  # The second argument is irrelevant.
+      [A(4, 'z')],
+      ['foo'])  # Strings sort last.
 
     Args:
      groups: A list of groups of elements.  Each group of elements is a list
@@ -733,6 +748,7 @@ class TestCase(unittest.TestCase):
        the elements in the group after it.  For example, these groups are
        totally ordered: [None], [1], [2, 2], [3].
     """
+    # pylint: enable=g-doc-args
 
     def CheckOrder(small, big):
       """Ensures small is ordered before big."""
@@ -800,16 +816,16 @@ class TestCase(unittest.TestCase):
     self.assertIsInstance(a, dict, 'First argument is not a dictionary')
     self.assertIsInstance(b, dict, 'Second argument is not a dictionary')
 
-    def Sorted(iterable):
+    def Sorted(list_of_items):
       try:
-        return sorted(iterable)  # In 3.3, unordered objects are possible.
+        return sorted(list_of_items)  # In 3.3, unordered are possible.
       except TypeError:
-        return list(iterable)
+        return list_of_items
 
     if a == b:
       return
-    a_items = Sorted(a.iteritems())
-    b_items = Sorted(b.iteritems())
+    a_items = Sorted(list(a.iteritems()))
+    b_items = Sorted(list(b.iteritems()))
 
     unexpected = []
     missing = []
@@ -831,9 +847,13 @@ class TestCase(unittest.TestCase):
     # value difference; treat them separately.
     for a_key, a_value in a_items:
       if a_key not in b:
-        unexpected.append((a_key, a_value))
+        missing.append((a_key, a_value))
       elif a_value != b[a_key]:
         different.append((a_key, a_value, b[a_key]))
+
+    for b_key, b_value in b_items:
+      if b_key not in a:
+        unexpected.append((b_key, b_value))
 
     if unexpected:
       message.append(
@@ -847,9 +867,6 @@ class TestCase(unittest.TestCase):
                                   safe_repr(b_value))
               for k, a_value, b_value in different))
 
-    for b_key, b_value in b_items:
-      if b_key not in a:
-        missing.append((b_key, b_value))
     if missing:
       message.append(
           'Missing entries:\n%s' % ''.join(
@@ -867,8 +884,9 @@ class TestCase(unittest.TestCase):
     self.assertEqual(parsed_a.fragment, parsed_b.fragment)
     self.assertEqual(sorted(parsed_a.params.split(';')),
                      sorted(parsed_b.params.split(';')))
-    self.assertDictEqual(urlparse.parse_qs(parsed_a.query),
-                         urlparse.parse_qs(parsed_b.query))
+    self.assertDictEqual(
+        urlparse.parse_qs(parsed_a.query, keep_blank_values=True),
+        urlparse.parse_qs(parsed_b.query, keep_blank_values=True))
 
   def assertSameStructure(self, a, b, aname='a', bname='b', msg=None):
     """Asserts that two values contain the same structural content.
@@ -1092,6 +1110,17 @@ def _CaptureTestOutput(stream, filename):
   _captured_streams[stream] = CapturedStream(stream, filename)
 
 
+def _StopCapturingStream(stream):
+  """Stops capturing the given output stream.
+
+  Args:
+    stream: Should be sys.stdout or sys.stderr.
+  """
+  assert _captured_streams.has_key(stream)
+  for cap_stream in _captured_streams.itervalues():
+    cap_stream.StopCapture()
+
+
 def _DiffTestOutput(stream, golden_filename):
   """Compare ouput of redirected stream to contents of golden file.
 
@@ -1099,12 +1128,9 @@ def _DiffTestOutput(stream, golden_filename):
     stream: Should be sys.stdout or sys.stderr.
     golden_filename: Absolute path to golden file.
   """
-  assert _captured_streams.has_key(stream)
+  _StopCapturingStream(stream)
+
   cap = _captured_streams[stream]
-
-  for cap_stream in _captured_streams.itervalues():
-    cap_stream.StopCapture()
-
   try:
     _Diff(cap.filename(), golden_filename)
   finally:
@@ -1127,13 +1153,41 @@ def _MaybeNotifyAboutTestOutput(outdir):
     sys.stderr.write('\nNOTE: Some tests capturing output into: %s\n' % outdir)
 
 
-# TODO(user): Make CaptureTest* be usable as context managers to easily stop
-# capturing at the appropriate time to make debugging failures much easier.
+class _DiffingTestOutputContext(object):
+
+  def __init__(self, diff_fn):
+    self._diff_fn = diff_fn
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc_value, tb):
+    self._diff_fn()
+    return True
 
 
 # Public interface
-def CaptureTestStdout(outfile=''):
-  """Capture the stdout stream to a file until StopCapturing() is called."""
+def CaptureTestStdout(outfile='', expected_output_filepath=None):
+  """Capture the stdout stream to a file.
+
+  If expected_output_filepath, then this function returns a context manager
+  that stops capturing and performs a diff when the context is exited.
+
+    with basetest.CaptureTestStdout(expected_output_filepath=some_filepath):
+      sys.stdout.print(....)
+
+  Otherwise, StopCapturing() must be called to stop capturing stdout, and then
+  DiffTestStdout() must be called to do the comparison.
+
+  Args:
+    outfile: The path to the local filesystem file to which to capture output;
+        if omitted, a standard filepath in --test_tmpdir will be used.
+    expected_output_filepath: The path to the local filesystem file containing
+        the expected output to be diffed against when the context is exited.
+  Returns:
+    A context manager if expected_output_filepath is specified, otherwise
+        None.
+  """
   if not outfile:
     outfile = os.path.join(FLAGS.test_tmpdir, 'captured.out')
     outdir = FLAGS.test_tmpdir
@@ -1141,10 +1195,32 @@ def CaptureTestStdout(outfile=''):
     outdir = os.path.dirname(outfile)
   _MaybeNotifyAboutTestOutput(outdir)
   _CaptureTestOutput(sys.stdout, outfile)
+  if expected_output_filepath is not None:
+    return _DiffingTestOutputContext(
+        lambda: DiffTestStdout(expected_output_filepath))
 
 
-def CaptureTestStderr(outfile=''):
-  """Capture the stderr stream to a file until StopCapturing() is called."""
+def CaptureTestStderr(outfile='', expected_output_filepath=None):
+  """Capture the stderr stream to a file.
+
+  If expected_output_filepath, then this function returns a context manager
+  that stops capturing and performs a diff when the context is exited.
+
+    with basetest.CaptureTestStderr(expected_output_filepath=some_filepath):
+      sys.stderr.print(....)
+
+  Otherwise, StopCapturing() must be called to stop capturing stderr, and then
+  DiffTestStderr() must be called to do the comparison.
+
+  Args:
+    outfile: The path to the local filesystem file to which to capture output;
+        if omitted, a standard filepath in --test_tmpdir will be used.
+    expected_output_filepath: The path to the local filesystem file containing
+        the expected output, to be diffed against when the context is exited.
+  Returns:
+    A context manager if expected_output_filepath is specified, otherwise
+        None.
+  """
   if not outfile:
     outfile = os.path.join(FLAGS.test_tmpdir, 'captured.err')
     outdir = FLAGS.test_tmpdir
@@ -1152,6 +1228,9 @@ def CaptureTestStderr(outfile=''):
     outdir = os.path.dirname(outfile)
   _MaybeNotifyAboutTestOutput(outdir)
   _CaptureTestOutput(sys.stderr, outfile)
+  if expected_output_filepath is not None:
+    return _DiffingTestOutputContext(
+        lambda: DiffTestStderr(expected_output_filepath))
 
 
 def DiffTestStdout(golden):
@@ -1260,8 +1339,8 @@ def _Diff(lhs, rhs):
   if external_diff:
     return _DiffViaExternalProgram(lhs, rhs, external_diff)
   try:
-    with open(lhs, 'rt') as lhs_f:
-      with open(rhs, 'rt') as rhs_f:
+    with open(lhs, 'r') as lhs_f:
+      with open(rhs, 'r') as rhs_f:
         diff_text = ''.join(
             difflib.unified_diff(lhs_f.readlines(), rhs_f.readlines()))
     if not diff_text:
@@ -1368,6 +1447,7 @@ class TestProgramManualRun(unittest.TestProgram):
 
 
 def main(*args, **kwargs):
+  # pylint: disable=g-doc-args
   """Executes a set of Python unit tests.
 
   Usually this function is called without arguments, so the
@@ -1375,16 +1455,18 @@ def main(*args, **kwargs):
   so it will run all test methods of all TestCase classes in the __main__
   module.
 
+
   Args:
     args: Positional arguments passed through to unittest.TestProgram.__init__.
     kwargs: Keyword arguments passed through to unittest.TestProgram.__init__.
   """
+  # pylint: enable=g-doc-args
   _RunInApp(RunTests, args, kwargs)
 
 
 def _IsInAppMain():
   """Returns True iff app.main or app.really_start is active."""
-  f = sys._getframe().f_back
+  f = sys._getframe().f_back  # pylint: disable=protected-access
   app_dict = app.__dict__
   while f:
     if f.f_globals is app_dict and f.f_code.co_name in ('run', 'really_start'):
@@ -1451,8 +1533,10 @@ def _RunInApp(function, args, kwargs):
   if faulthandler:
     try:
       faulthandler.enable()
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
       sys.stderr.write('faulthandler.enable() failed %r; ignoring.\n' % e)
+    else:
+      faulthandler.register(signal.SIGTERM)
   if _IsInAppMain():
     # Save command-line flags so the side effects of FLAGS(sys.argv) can be
     # undone.

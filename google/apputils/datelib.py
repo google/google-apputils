@@ -30,7 +30,7 @@ import time
 import types
 import warnings
 
-from dateutil import parser
+import dateutil.parser
 import pytz
 
 
@@ -342,9 +342,8 @@ class BaseTimestamp(datetime.datetime):
     Returns:
       New BaseTimestamp.
     """
-    if tz is None:
-      return cls.Localize(cls(*(time.strptime(date_string, format)[:6])))
-    return tz.localize(cls(*(time.strptime(date_string, format)[:6])))
+    date_time = super(BaseTimestamp, cls).strptime(date_string, format)
+    return (tz.localize if tz else cls.Localize)(date_time)
 
   def astimezone(self, *args, **kwargs):
     """tz -> convert to time in new timezone tz."""
@@ -461,8 +460,10 @@ class Timestamp(BaseTimestamp):
       New Timestamp or None if unable to parse the timestring.
     """
     try:
-      r = parser.parse(timestring)
-    except ValueError:
+      r = dateutil.parser.parse(timestring)
+      # dateutil will raise ValueError if it's an unknown format -- or
+      # TypeError in some cases, due to bugs.
+    except (TypeError, ValueError):
       return None
     if not r.tzinfo:
       r = (tz or cls.LocalTimezone).localize(r)

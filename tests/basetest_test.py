@@ -33,6 +33,56 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer('testid', 0, 'Which test to run')
 
 
+_OUTPUT_CAPTURING_CASES = [
+    (basetest.CaptureTestStdout, basetest.DiffTestStdout, sys.stdout),
+    (basetest.CaptureTestStderr, basetest.DiffTestStderr, sys.stderr),
+]
+
+
+class CaptureTestStdoutStderrTest(basetest.TestCase):
+
+  def setUp(self):
+    self.expected_filepath = os.path.join(FLAGS.test_tmpdir, 'expected_output')
+
+  def testStdoutCapturedSuccessfully(self):
+    for capture_output_fn, diff_output_fn, ostream in _OUTPUT_CAPTURING_CASES:
+      capture_output_fn()
+      ostream.write('This gets captured\n')
+      with open(self.expected_filepath, 'wb') as expected_file:
+        expected_file.write(b'This gets captured\n')
+      diff_output_fn(self.expected_filepath)  # should do nothing
+
+  def testRaisesWhenCapturedStdoutDifferentThanExpected(self):
+    for capture_output_fn, diff_output_fn, ostream in _OUTPUT_CAPTURING_CASES:
+      capture_output_fn()
+      ostream.write('Correct captured.out\n')
+      with open(self.expected_filepath, 'wb') as expected_file:
+        expected_file.write(b'Incorrect captured.out\n')
+      self.assertRaises(basetest.OutputDifferedError,
+                        diff_output_fn, self.expected_filepath)
+
+  def testStdoutNoLongerCapturedAfterDiffTest(self):
+    for capture_output_fn, diff_output_fn, ostream in _OUTPUT_CAPTURING_CASES:
+      with open(self.expected_filepath, 'wb') as expected_file:
+        expected_file.write(b'This goes to captured.out\n')
+      capture_output_fn()
+      ostream.write('This goes to captured.out\n')
+      diff_output_fn(self.expected_filepath)  # should do nothing
+      ostream.write('This goes to stdout screen\n')
+      capture_output_fn()
+      ostream.write('This goes to captured.out\n')
+      diff_output_fn(self.expected_filepath)  # should do nothing
+
+  def testCapturingTestStdoutReturnsContextManager(self):
+    for capture_output_fn, _, ostream in _OUTPUT_CAPTURING_CASES:
+      with open(self.expected_filepath, 'wb') as expected_file:
+        expected_file.write(b'This goes to captured.out\n')
+      ostream.write('This goes to stdout screen\n')
+      with capture_output_fn(
+          expected_output_filepath=self.expected_filepath):
+        ostream.write('This goes to captured.out\n')
+
+
 class GoogleTestBaseUnitTest(basetest.TestCase):
 
   def setUp(self):
@@ -43,56 +93,6 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
   def tearDown(self):
     if self._orig_test_diff is not None:
       os.environ['TEST_DIFF'] = self._orig_test_diff
-
-  def testCapturing(self):
-    basetest.CaptureTestStdout()
-    basetest.CaptureTestStderr()
-    # print two lines to stdout
-    sys.stdout.write('This goes to captured.out\n')
-    sys.stdout.write('This goes to captured.out\n')
-    sys.stderr.write('This goes to captured.err\n')
-
-    stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
-    stdout_file = open(stdout_filename, 'wb')
-    stdout_file.write(b'This goes to captured.out\n'
-                      b'This goes to captured.out\n')
-    stdout_file.close()
-    basetest.DiffTestStdout(stdout_filename)
-
-    # After DiffTestStdout(), the standard output is no longer captured
-    # and is written to the screen. Standard error is still captured.
-    sys.stdout.write('This goes to stdout screen 1/2\n')
-    sys.stderr.write('This goes to captured.err\n')
-
-    # After CaptureTestStdout(), both standard output and standard error
-    # are captured.
-    basetest.CaptureTestStdout()
-    sys.stdout.write('This goes to captured.out\n')
-    sys.stderr.write('This goes to captured.err\n')
-
-    stderr_filename = os.path.join(FLAGS.test_tmpdir, 'stderr.diff')
-    stderr_file = open(stderr_filename, 'wb')
-    stderr_file.write(b'This goes to captured.err\n'
-                      b'This goes to captured.err\n'
-                      b'This goes to captured.err\n')
-    stderr_file.close()
-
-    # After DiffTestStderr(), the standard error is no longer captured and
-    # is written to the screen. Standard output is still captured.
-    basetest.DiffTestStderr(stderr_filename)
-    sys.stdout.write('This goes to captured.out\n')
-    sys.stderr.write('This goes to stderr screen 2/2\n')
-
-    basetest.DiffTestStdout(stdout_filename)
-
-    basetest.CaptureTestStdout()
-    sys.stdout.write('Correct Output\n')
-    stdout_filename = os.path.join(FLAGS.test_tmpdir, 'stdout.diff')
-    stdout_file = open(stdout_filename, 'wb')
-    stdout_file.write(b'Incorrect Output\n')
-    stdout_file.close()
-    self.assertRaises(basetest.OutputDifferedError, basetest.DiffTestStdout,
-                      stdout_filename)
 
   def test_Diff_SameData(self):
     """Tests for the internal _Diff method."""
@@ -215,6 +215,20 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     self.assertRaises(AssertionError, self.assertNotIn, 1, [1, 2, 3])
     self.assertRaises(AssertionError, self.assertNotIn, 'cow', animals)
 
+  @basetest.unittest.expectedFailure
+  def testExpectedFailure(self):
+    if FLAGS.testid == 7:
+      self.assertEqual(1, 1)  # expected failure, got success
+    else:
+      self.assertEqual(1, 2)  # the expected failure
+
+  @basetest.unittest.expectedFailure
+  def testDifferentExpectedFailure(self):
+    if FLAGS.testid == 8:
+      self.assertEqual(1, 1)  # expected failure, got success
+    else:
+      self.assertEqual(1, 2)  # the expected failure
+
   def testAssertEqual(self):
     if FLAGS.testid != 5:
       return
@@ -262,6 +276,18 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
       self.assertSameElements([{'a': 1}, {'b': 2}], [{'b': 2}, {'a': 1}])
     self.assertRaises(AssertionError, self.assertSameElements, [[1]], [[2]])
 
+  def testAssertItemsEqualHotfix(self):
+    """Confirm that http://bugs.python.org/issue14832 - b/10038517 is gone."""
+    for assert_items_method in (self.assertItemsEqual, self.assertCountEqual):
+      with self.assertRaises(self.failureException) as error_context:
+        assert_items_method([4], [2])
+      error_message = str(error_context.exception)
+      # Confirm that the bug is either no longer present in Python or that our
+      # assertItemsEqual patching version of the method in basetest.TestCase
+      # doesn't get used.
+      self.assertIn('First has 1, Second has 0:  4', error_message)
+      self.assertIn('First has 0, Second has 1:  2', error_message)
+
   def testAssertDictEqual(self):
     self.assertDictEqual({}, {})
 
@@ -284,9 +310,9 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
     try:
       # Ensure we use equality as the sole measure of elements, not type, since
       # that is consistent with dict equality.
-      self.assertDictEqual({1: 1L, 2: 2}, {1: 1, 2: 3})
+      self.assertDictEqual({1: 1.0, 2: 2}, {1: 1, 2: 3})
     except AssertionError, e:
-      self.assertMultiLineEqual('{1: 1L, 2: 2} != {1: 1, 2: 3}\n'
+      self.assertMultiLineEqual('{1: 1.0, 2: 2} != {1: 1, 2: 3}\n'
                                 'repr() of differing entries:\n2: 2 != 3\n',
                                 str(e))
 
@@ -294,7 +320,7 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
       self.assertDictEqual({}, {'x': 1})
     except AssertionError, e:
       self.assertMultiLineEqual("{} != {'x': 1}\n"
-                                "Missing entries:\n'x': 1\n",
+                                "Unexpected, but present entries:\n'x': 1\n",
                                 str(e))
     else:
       self.fail('Expecting AssertionError')
@@ -314,13 +340,13 @@ class GoogleTestBaseUnitTest(basetest.TestCase):
       self.assertMultiLineEqual("""\
 {'a': 1, 'b': 2, 'c': 3} != {'a': 2, 'c': 3, 'd': 4}
 Unexpected, but present entries:
-'b': 2
+'d': 4
 
 repr() of differing entries:
 'a': 1 != 2
 
 Missing entries:
-'d': 4
+'b': 2
 """, str(e))
     else:
       self.fail('Expecting AssertionError')
@@ -346,19 +372,18 @@ Missing entries:
     except AssertionError, e:
       # Do as best we can not to be misleading when objects have the same repr
       # but aren't equal.
-      self.assertMultiLineEqual("""\
-{'a': A, b: B, c: C} != {'a': A, d: D, e: E}
-Unexpected, but present entries:
-b: B
-c: C
-
-repr() of differing entries:
-'a': A != A
-
-Missing entries:
-d: D
-e: E
-""", str(e))
+      err_str = str(e)
+      self.assertStartsWith(err_str,
+                            "{'a': A, b: B, c: C} != {'a': A, d: D, e: E}\n")
+      self.assertRegexpMatches(err_str,
+                               r'(?ms).*^Unexpected, but present entries:\s+'
+                               r'^(d: D$\s+^e: E|e: E$\s+^d: D)$')
+      self.assertRegexpMatches(err_str,
+                               r'(?ms).*^repr\(\) of differing entries:\s+'
+                               r'^.a.: A != A$', err_str)
+      self.assertRegexpMatches(err_str,
+                               r'(?ms).*^Missing entries:\s+'
+                               r'^(b: B$\s+^c: C|c: C$\s+^b: B)$')
     else:
       self.fail('Expecting AssertionError')
 
@@ -366,7 +391,7 @@ e: E
     class RaisesOnRepr(object):
 
       def __repr__(self):
-        return 1/0
+        return 1/0  # Intentionally broken __repr__ implementation.
 
     try:
       self.assertDictEqual(
@@ -379,15 +404,15 @@ e: E
       # prefix or a basetest_test prefix, so strip that for comparison.
       error_msg = re.sub(
           r'( at 0x[^>]+)|__main__\.|basetest_test\.', '', str(e))
-      self.assertEquals("""\
-{<RaisesOnRepr object>: <RaisesOnRepr object>} != \
-{<RaisesOnRepr object>: <RaisesOnRepr object>}
+      self.assertRegexpMatches(error_msg, """(?m)\
+{<.*RaisesOnRepr object.*>: <.*RaisesOnRepr object.*>} != \
+{<.*RaisesOnRepr object.*>: <.*RaisesOnRepr object.*>}
 Unexpected, but present entries:
-<RaisesOnRepr object>: <RaisesOnRepr object>
+<.*RaisesOnRepr object.*>: <.*RaisesOnRepr object.*>
 
 Missing entries:
-<RaisesOnRepr object>: <RaisesOnRepr object>
-""", error_msg)
+<.*RaisesOnRepr object.*>: <.*RaisesOnRepr object.*>
+""")
 
     # Confirm that safe_repr, not repr, is being used.
     class RaisesOnLt(object):
@@ -477,7 +502,7 @@ Missing entries:
     # sets, lists, tuples, dicts all ok.  Types of set and subset do not have to
     # match.
     actual = ('a', 'b', 'c')
-    self.assertContainsSubset(set(('a', 'b')), actual)
+    self.assertContainsSubset({'a', 'b'}, actual)
     self.assertContainsSubset(('b', 'c'), actual)
     self.assertContainsSubset({'b': 1, 'c': 2}, list(actual))
     self.assertContainsSubset(['c', 'a'], set(actual))
@@ -490,11 +515,30 @@ Missing entries:
     self.assertRaises(AssertionError, self.assertContainsSubset, {'a': 1}, [])
 
     self.assertRaisesWithRegexpMatch(AssertionError, 'Missing elements',
-                                     self.assertContainsSubset, set((1, 2, 3)),
-                                     set((1, 2)))
+                                     self.assertContainsSubset, {1, 2, 3},
+                                     {1, 2})
     self.assertRaisesWithRegexpMatch(
         AssertionError, 'Custom message: Missing elements',
-        self.assertContainsSubset, set((1, 2)), set((1,)), 'Custom message')
+        self.assertContainsSubset, {1, 2}, {1}, 'Custom message')
+
+  def testAssertNoCommonElements(self):
+    actual = ('a', 'b', 'c')
+    self.assertNoCommonElements((), actual)
+    self.assertNoCommonElements(('d', 'e'), actual)
+    self.assertNoCommonElements({'d', 'e'}, actual)
+
+    self.assertRaisesWithRegexpMatch(
+        AssertionError, 'Custom message: Common elements',
+        self.assertNoCommonElements, {1, 2}, {1}, 'Custom message')
+
+    with self.assertRaises(AssertionError):
+      self.assertNoCommonElements(['a'], actual)
+
+    with self.assertRaises(AssertionError):
+      self.assertNoCommonElements({'a', 'b', 'c'}, actual)
+
+    with self.assertRaises(AssertionError):
+      self.assertNoCommonElements({'b', 'c'}, set(actual))
 
   def testAssertAlmostEqual(self):
     if FLAGS.testid != 6:
@@ -540,6 +584,32 @@ Missing entries:
     observed = basetest.GetCommandString(u'command arg-0')
 
     self.assertEqual(expected, observed)
+
+  def testAssertStartsWith(self):
+    self.assertStartsWith('foobar', 'foo')
+    self.assertStartsWith('foobar', 'foobar')
+    self.assertRaises(AssertionError, self.assertStartsWith, 'foobar', 'bar')
+    self.assertRaises(AssertionError, self.assertStartsWith, 'foobar', 'blah')
+
+  def testAssertNotStartsWith(self):
+    self.assertNotStartsWith('foobar', 'bar')
+    self.assertNotStartsWith('foobar', 'blah')
+    self.assertRaises(AssertionError, self.assertNotStartsWith, 'foobar', 'foo')
+    self.assertRaises(AssertionError, self.assertNotStartsWith, 'foobar',
+                      'foobar')
+
+  def testAssertEndsWith(self):
+    self.assertEndsWith('foobar', 'bar')
+    self.assertEndsWith('foobar', 'foobar')
+    self.assertRaises(AssertionError, self.assertEndsWith, 'foobar', 'foo')
+    self.assertRaises(AssertionError, self.assertEndsWith, 'foobar', 'blah')
+
+  def testAssertNotEndsWith(self):
+    self.assertNotEndsWith('foobar', 'foo')
+    self.assertNotEndsWith('foobar', 'blah')
+    self.assertRaises(AssertionError, self.assertNotEndsWith, 'foobar', 'bar')
+    self.assertRaises(AssertionError, self.assertNotEndsWith, 'foobar',
+                      'foobar')
 
   def testAssertRegexMatch_matches(self):
     self.assertRegexMatch('str', ['str'])
@@ -817,37 +887,50 @@ test case
     self.assertRaises(AssertionError, self.assertBetween, -1e10000, -1e10, 0)
 
   def testAssertRaisesWithPredicateMatch_noRaiseFails(self):
-    self.assertRaisesWithRegexpMatch(
-        AssertionError, '^Exception not raised$',
-        self.assertRaisesWithPredicateMatch, Exception,
-        lambda e: True,
-        lambda: 1)  # don't raise
+    with self.assertRaisesRegexp(AssertionError, '^Exception not raised$'):
+      self.assertRaisesWithPredicateMatch(Exception,
+                                          lambda e: True,
+                                          lambda: 1)  # don't raise
+
+    with self.assertRaisesRegexp(AssertionError, '^Exception not raised$'):
+      with self.assertRaisesWithPredicateMatch(Exception, lambda e: True):
+        pass  # don't raise
 
   def testAssertRaisesWithPredicateMatch_raisesWrongExceptionFails(self):
     def _RaiseValueError():
       raise ValueError
 
-    self.assertRaises(
-        ValueError,
-        self.assertRaisesWithPredicateMatch,
-        IOError, lambda e: True, _RaiseValueError)
+    with self.assertRaises(ValueError):
+      self.assertRaisesWithPredicateMatch(IOError,
+                                          lambda e: True,
+                                          _RaiseValueError)
+
+    with self.assertRaises(ValueError):
+      with self.assertRaisesWithPredicateMatch(IOError, lambda e: True):
+        raise ValueError
 
   def testAssertRaisesWithPredicateMatch_predicateFails(self):
     def _RaiseValueError():
       raise ValueError
-    self.assertRaisesWithRegexpMatch(
-        AssertionError, ' does not match predicate ',
-        self.assertRaisesWithPredicateMatch, ValueError,
-        lambda e: False,
-        _RaiseValueError)
+    with self.assertRaisesRegexp(AssertionError, ' does not match predicate '):
+      self.assertRaisesWithPredicateMatch(ValueError,
+                                          lambda e: False,
+                                          _RaiseValueError)
+
+    with self.assertRaisesRegexp(AssertionError, ' does not match predicate '):
+      with self.assertRaisesWithPredicateMatch(ValueError, lambda e: False):
+        raise ValueError
 
   def testAssertRaisesWithPredicateMatch_predicatePasses(self):
     def _RaiseValueError():
       raise ValueError
 
-    self.assertRaisesWithPredicateMatch (ValueError,
-                                         lambda e: True,
-                                         _RaiseValueError)
+    self.assertRaisesWithPredicateMatch(ValueError,
+                                        lambda e: True,
+                                        _RaiseValueError)
+
+    with self.assertRaisesWithPredicateMatch(ValueError, lambda e: True):
+      raise ValueError
 
   def testAssertRaisesWithRegexpMatch(self):
     class ExceptionMock(Exception):
@@ -912,6 +995,33 @@ test case
         ['The', 'dog', 'fox'], 'The quick brown fox jumped over the lazy dog')
     self.assertRaises(
         AssertionError, self.assertContainsInOrder, ['dog'], '')
+
+  def testAssertContainsSubsequenceForNumbers(self):
+    self.assertContainsSubsequence([1, 2, 3], [1])
+    self.assertContainsSubsequence([1, 2, 3], [1, 2])
+    self.assertContainsSubsequence([1, 2, 3], [1, 3])
+
+    with self.assertRaises(AssertionError):
+      self.assertContainsSubsequence([1, 2, 3], [4])
+    with self.assertRaises(AssertionError):
+      self.assertContainsSubsequence([1, 2, 3], [3, 1])
+
+  def testAssertContainsSubsequenceForStrings(self):
+    self.assertContainsSubsequence(['foo', 'bar', 'blorp'], ['foo', 'blorp'])
+    with self.assertRaises(AssertionError):
+      self.assertContainsSubsequence(
+          ['foo', 'bar', 'blorp'], ['blorp', 'foo'])
+
+  def testAssertContainsSubsequenceWithEmptySubsequence(self):
+    self.assertContainsSubsequence([1, 2, 3], [])
+    self.assertContainsSubsequence(['foo', 'bar', 'blorp'], [])
+    self.assertContainsSubsequence([], [])
+
+  def testAssertContainsSubsequenceWithEmptyContainer(self):
+    with self.assertRaises(AssertionError):
+      self.assertContainsSubsequence([], [1])
+    with self.assertRaises(AssertionError):
+      self.assertContainsSubsequence([], ['foo'])
 
   def testAssertTotallyOrdered(self):
     # Valid.
@@ -1041,6 +1151,7 @@ test case
     self.assertUrlEqual('http://a/path;p2;p3;p1', 'http://a/path;p1;p2;p3')
     self.assertUrlEqual('sip:alice@atlanta.com;maddr=239.255.255.1;ttl=15',
                         'sip:alice@atlanta.com;ttl=15;maddr=239.255.255.1')
+    self.assertUrlEqual('http://nyan/cat?p=1&b=', 'http://nyan/cat?b=&p=1')
 
   def testAssertUrlEqualDifferent(self):
     self.assertRaises(AssertionError, self.assertUrlEqual,
@@ -1059,6 +1170,8 @@ test case
                       'http://a#g', 'sip://a#f')
     self.assertRaises(AssertionError, self.assertUrlEqual,
                       'http://a/path;p1;p3;p1', 'http://a/path;p1;p2;p3')
+    self.assertRaises(AssertionError, self.assertUrlEqual,
+                      'http://nyan/cat?p=1&b=', 'http://nyan/cat?p=1')
 
   def testSameStructure_same(self):
     self.assertSameStructure(0, 0)
@@ -1384,332 +1497,6 @@ class EqualityAssertionTest(basetest.TestCase):
     self._PerformAppleAppleOrangeChecks(same_a, same_b, different)
 
 
-class GoogleTestBasePy24UnitTest(basetest.TestCase):
-
-  def RunTestCaseTests(self, test_case_class):
-    test_loader = test_case_class._test_loader
-    test_result = unittest.TestResult()
-    test_loader.loadTestsFromTestCase(test_case_class).run(test_result)
-    return test_result
-
-  def testSetUpCalledForEachTestMethod(self):
-    self.RunTestCaseTests(SetUpSpy)
-
-    self.assertEquals(2, SetUpSpy.set_up_counter)
-
-  def testSetUpTestCaseCalledExactlyOnce(self):
-    self.RunTestCaseTests(SetUpTestCaseSpy)
-
-    self.assertEquals(1, SetUpTestCaseSpy.set_up_test_case_counter)
-
-  def testTearDownCalledForEachTestMethod(self):
-    self.RunTestCaseTests(TearDownSpy)
-
-    self.assertEquals(2, TearDownSpy.tear_down_counter)
-
-  def testTearDownTestCaseCalledExactlyOnce(self):
-    self.RunTestCaseTests(TearDownTestCaseSpy)
-
-    self.assertEquals(1, TearDownTestCaseSpy.tear_down_test_case_counter)
-
-  def testDefaultSetUpTestCaseExists(self):
-    self.assertTrue(
-        hasattr(OnlyBeforeAfterTestCaseMetaDefinedSpy, 'setUpTestCase'))
-
-  def testDefaultTearDownTestCaseExists(self):
-    self.assertTrue(
-        hasattr(OnlyBeforeAfterTestCaseMetaDefinedSpy, 'tearDownTestCase'))
-
-  def testBeforeAfterWithInheritanceAndOverridesA(self):
-    """Test that things work when there's subclassing and overrides."""
-    InheritanceSpyBaseClass.ClearLog()
-    self.RunTestCaseTests(InheritanceSpySubClassA)
-
-    expected_calls = [
-        'sub setUpTestCase',
-        'base setUp',
-        'base StubTest0',
-        'sub tearDown',
-        'base setUp',
-        'sub StubTest1',
-        'sub tearDown',
-        'base tearDownTestCase']
-
-    self.assertSequenceEqual(expected_calls,
-                             InheritanceSpyBaseClass.calls_made)
-
-  def testBeforeAfterWithInheritanceAndOverridesB(self):
-    """Complementary to the other test, test39A."""
-    InheritanceSpyBaseClass.ClearLog()
-    self.RunTestCaseTests(InheritanceSpySubClassB)
-
-    expected_calls = [
-        'base setUpTestCase',
-        'sub setUp',
-        'sub StubTest0',
-        'base tearDown',
-        'sub setUp',
-        'sub StubTest1',
-        'base tearDown',
-        'sub setUp',
-        'sub StubTest2',
-        'base tearDown',
-        'sub tearDownTestCase']
-
-    self.assertSequenceEqual(expected_calls,
-                             InheritanceSpyBaseClass.calls_made)
-
-  def testVerifyTearDownOrder(self):
-    """Verify that tearDownTestCase gets called at the correct time."""
-    TearDownOrderWatcherBaseClass.ClearLog()
-    self.RunTestCaseTests(TearDownOrderWatcherSubClass)
-
-    expected_calls = [
-        'TearDownOrderWatcherBaseClass.setUpTestCase',
-        'TearDownOrderWatcherSubClass.setUp Start',
-        'TearDownOrderWatcherBaseClass.setUp',
-        'TearDownOrderWatcherSubClass.setUp Finish',
-        'testAAAA',
-        'TearDownOrderWatcherSubClass.tearDown Start',
-        'TearDownOrderWatcherBaseClass.tearDown',
-        'TearDownOrderWatcherSubClass.tearDown Finish',
-        'TearDownOrderWatcherBaseClass.tearDownTestCase']
-
-    self.assertSequenceEqual(expected_calls,
-                             TearDownOrderWatcherBaseClass.calls_made)
-
-  def test_arguments_added_by_decorator(self):
-    """Arguments added to test methods by decorators (ex: mock.patch) should be
-    able to pass through BeforeAfterTestCase meta."""
-    def add_arguments(**kargs):
-      def wrapper(cls):
-        test_main = cls.testMain
-        cls.testMain = lambda self: test_main(self, **kargs)
-        return cls
-      return wrapper
-
-    @add_arguments(named='blah')
-    class TestClass(basetest.TestCase):
-      __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-      def testMain(self, named):
-        self.assertEqual('blah', named)
-
-    result = self.RunTestCaseTests(TestClass)
-    self.assertTrue(result.wasSuccessful())
-
-
-class StubPrefixedTestMethodsTestCase(basetest.TestCase):
-
-  _test_loader = unittest.TestLoader()
-  _test_loader.testMethodPrefix = 'StubTest'
-
-  def StubTest0(self):
-    pass
-
-  def StubTest1(self):
-    pass
-
-
-class SetUpSpy(StubPrefixedTestMethodsTestCase):
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-  set_up_counter = 0
-
-  def setUp(self):
-    StubPrefixedTestMethodsTestCase.setUp(self)
-    SetUpSpy.set_up_counter += 1
-
-
-class SetUpTestCaseSpy(StubPrefixedTestMethodsTestCase):
-
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-  set_up_test_case_counter = 0
-
-  def setUpTestCase(self):
-    StubPrefixedTestMethodsTestCase.setUpTestCase(self)
-    SetUpTestCaseSpy.set_up_test_case_counter += 1
-
-
-class TearDownSpy(StubPrefixedTestMethodsTestCase):
-
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-  tear_down_counter = 0
-
-  def tearDown(self):
-    TearDownSpy.tear_down_counter += 1
-    StubPrefixedTestMethodsTestCase.tearDown(self)
-
-
-class TearDownTestCaseSpy(StubPrefixedTestMethodsTestCase):
-
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-  tear_down_test_case_counter = 0
-
-  def tearDownTestCase(self):
-    TearDownTestCaseSpy.tear_down_test_case_counter += 1
-    StubPrefixedTestMethodsTestCase.tearDownTestCase(self)
-
-
-class OnlyBeforeAfterTestCaseMetaDefinedSpy(basetest.TestCase):
-
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-
-# Here we define 3 classes: a base class and two subclasses inheriting from it.
-# The base class has implementations for all four setUp / tearDown methods, and
-# the two subclasses override complementary subsets of them: one does
-# setUpTestCase and tearDown, the other setUp and tearDownTestCase.  This way we
-# can check that overriding each method works, and that they don't have to be
-# overriden in matching pairs.
-
-# We use an even number of test methods in one test (2 in A) and an odd number
-# in the other (3 in B) intentionally.  These failed in different ways with the
-# old code.  With an even number of test methods, the old code calls
-# tearDownTestCase early; with an odd number of test methods tearDownTestCase
-# would not be called.  The older implementation calls tearDownTestCase when its
-# counter of tests remaining reached zero.  When double counting, if there were
-# 2 test methods, it'd hit 0 after executing only 1 of them.  If there were 3,
-# it would go from 3 to 1 to -1, skipping 0 entirely.
-
-
-class InheritanceSpyBaseClass(basetest.TestCase):
-
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-  calls_made = []
-
-  @staticmethod
-  def Log(call):
-    InheritanceSpyBaseClass.calls_made.append(call)
-
-  @staticmethod
-  def ClearLog():
-    InheritanceSpyBaseClass.calls_made = []
-
-  def setUpTestCase(self):
-    self.Log('base setUpTestCase')
-
-  def tearDownTestCase(self):
-    self.Log('base tearDownTestCase')
-
-  def setUp(self):
-    self.Log('base setUp')
-
-  def tearDown(self):
-    self.Log('base tearDown')
-
-  def StubTest0(self):
-    self.Log('base StubTest0')
-
-
-class InheritanceSpySubClassA(InheritanceSpyBaseClass):
-  _test_loader = unittest.TestLoader()
-  _test_loader.testMethodPrefix = 'StubTest'
-
-  def StubTest1(self):
-    self.Log('sub StubTest1')
-
-  def setUpTestCase(self):
-    self.Log('sub setUpTestCase')
-
-  def tearDown(self):
-    self.Log('sub tearDown')
-
-
-class InheritanceSpySubClassB(InheritanceSpyBaseClass):
-  _test_loader = unittest.TestLoader()
-  _test_loader.testMethodPrefix = 'StubTest'
-
-  # Intentionally mask StubTest0 from the base class
-  def StubTest0(self):
-    self.Log('sub StubTest0')
-
-  def StubTest1(self):
-    self.Log('sub StubTest1')
-
-  def StubTest2(self):
-    self.Log('sub StubTest2')
-
-  def setUp(self):
-    self.Log('sub setUp')
-
-  def tearDownTestCase(self):
-    self.Log('sub tearDownTestCase')
-
-
-# We define another pair of base/subclass here to verify that tearDown
-# and tearDownTestCase always happen in the correct order.
-class TearDownOrderWatcherBaseClass(basetest.TestCase):
-  __metaclass__ = basetest.BeforeAfterTestCaseMeta
-
-  calls_made = []
-
-  @staticmethod
-  def Log(call):
-    TearDownOrderWatcherBaseClass.calls_made.append(call)
-
-  @staticmethod
-  def ClearLog():
-    TearDownOrderWatcherBaseClass.calls_made = []
-
-  def __init__(self, *args, **kwds):
-    super(TearDownOrderWatcherBaseClass, self).__init__(*args, **kwds)
-
-  def setUpTestCase(self):
-    self.Log('TearDownOrderWatcherBaseClass.setUpTestCase')
-
-  def tearDownTestCase(self):
-    self.Log('TearDownOrderWatcherBaseClass.tearDownTestCase')
-
-  def setUp(self):
-    self.Log('TearDownOrderWatcherBaseClass.setUp')
-
-  def tearDown(self):
-    self.Log('TearDownOrderWatcherBaseClass.tearDown')
-
-
-class TearDownOrderWatcherSubClass(TearDownOrderWatcherBaseClass):
-  def setUp(self):
-    self.Log('TearDownOrderWatcherSubClass.setUp Start')
-    super(TearDownOrderWatcherSubClass, self).setUp()
-    self.Log('TearDownOrderWatcherSubClass.setUp Finish')
-
-  def tearDown(self):
-    self.Log('TearDownOrderWatcherSubClass.tearDown Start')
-    super(TearDownOrderWatcherSubClass, self).tearDown()
-    self.Log('TearDownOrderWatcherSubClass.tearDown Finish')
-
-  def testAAAA(self):
-    self.Log('testAAAA')
-    self.assertTrue(True)
-
-
-# We define a multiply inheriting metaclass and an instance class to verify that
-# multiple inheritance for metaclasses.
-class OtherMetaClass(type):
-  def __init__(cls, name, bases, dict):
-    super(OtherMetaClass, cls).__init__(name, bases, dict)
-    cls.other_meta_called = True
-
-
-class MultipleMetaBeforeAfter(basetest.BeforeAfterTestCaseMeta, OtherMetaClass):
-  """Allow classes to support BeforeAfterTestCase and another metaclass.
-
-  Order matters here since we want to make sure BeforeAfterTestCaseMeta passes
-  through correctly to the other metaclass.
-  """
-
-
-class MultipleMetaInstanceClass(basetest.TestCase):
-  __metaclass__ = MultipleMetaBeforeAfter
-
-  def testOtherMetaInitCalled(self):
-    self.assertTrue(hasattr(MultipleMetaInstanceClass, 'other_meta_called'))
-
-
 class AssertSequenceStartsWithTest(basetest.TestCase):
 
   def setUp(self):
@@ -1763,18 +1550,20 @@ class AssertSequenceStartsWithTest(basetest.TestCase):
 
 
 class InitNotNecessaryForAssertsTest(basetest.TestCase):
-  '''TestCase assertions should work even if __init__ wasn't correctly
-  called.
+  """TestCase assertions should work even if __init__ wasn't correctly called.
 
   This is a hack, see comment in
   basetest.TestCase._getAssertEqualityFunc. We know that not calling
   __init__ of a superclass is a bad thing, but people keep doing them,
   and this (even if a little bit dirty) saves them from shooting
   themselves in the foot.
-  '''
+  """
+
   def testSubclass(self):
+
     class Subclass(basetest.TestCase):
-      def __init__(self):
+
+      def __init__(self):  # pylint: disable=super-init-not-called
         pass
 
     Subclass().assertEquals({}, {})
@@ -1782,6 +1571,7 @@ class InitNotNecessaryForAssertsTest(basetest.TestCase):
   def testMultipleInheritance(self):
 
     class Foo(object):
+
       def __init__(self, *args, **kwargs):
         pass
 

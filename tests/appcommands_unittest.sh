@@ -187,42 +187,55 @@ $PYTHON $TEST --hint 'XYZ' test1|grep -q "Hint1:'XYZ'" || die "Test 30 failed"
 # Success, --hint before command, foo shown with test1
 $PYTHON $TEST test1 --hint 'XYZ'|grep -q "Hint1:'XYZ'" || die "Test 31 failed"
 
+# Success, test1b --allhelp, modified _all_commands_help shown
+$PYTHON $TEST test1b --allhelp|grep -q "AllHelp:'test1b short help'" || die "Test 32 failed"
+
+# Failure, test1 --allhelp, modified _all_commands_help not shown
+$PYTHON $TEST test1 --allhelp|grep -q "AllHelp:'test1b short help'" && die "Test 33 failed"
 
 # Test for standard --help
-$PYTHON $TEST --help|grep -q "following commands:" && die "Test 32 failed"
-$PYTHON $TEST help|grep -q "following commands:" || die "Test 33 failed"
+$PYTHON $TEST --help|grep -q "following commands:" && die "Test 34 failed"
+$PYTHON $TEST help|grep -q "following commands:" || die "Test 35 failed"
 
 # No help after command
-$PYTHON $TEST test1 --help|grep -q "following commands:" && die "Test 34 failed"
-$PYTHON $TEST test1 --help 'XYZ'|grep -q "Hint1:'XYZ'" && die "Test 35 failed"
+$PYTHON $TEST test1 --help|grep -q "following commands:" && die "Test 36 failed"
+$PYTHON $TEST test1 --help 'XYZ'|grep -q "Hint1:'XYZ'" && die "Test 37 failed"
 
 # Help specific to command:
-$PYTHON $TEST --help test1|grep -q "following commands:" && die "Test 36 failed"
-$PYTHON $TEST --help test1|grep -q "test1 *Help for test1" && die "Test 37 failed"
-$PYTHON $TEST help test1|grep -q "following commands:" && die "Test 38 failed"
+$PYTHON $TEST --help test1|grep -q "following commands:" && die "Test 38 failed"
+$PYTHON $TEST --help test1|grep -q "test1 *Help for test1" && die "Test 39 failed"
+$PYTHON $TEST help test1|grep -q "following commands:" && die "Test 40 failed"
 $PYTHON $TEST help test1|grep -q "test1, testalias1, testalias2" || die\
-  "Test 39 failed"
-$PYTHON $TEST help testalias1|grep -q "[-]-foo" || die\
-  "Test 40 failed"
-$PYTHON $TEST help testalias2|grep -q "[-]-foo" || die\
   "Test 41 failed"
-$PYTHON $TEST help test4|grep -q "^ *Help for test4" || die "Test 42 failed"
-$PYTHON $TEST help testalias3|grep -q "^ *Help for test4" || die\
+$PYTHON $TEST help testalias1|grep -q "test1, testalias1, testalias2" || die\
+  "Test 42 failed"
+$PYTHON $TEST help testalias1|grep -q "[-]-foo" || die\
   "Test 43 failed"
+$PYTHON $TEST help testalias2|grep -q "[-]-foo" || die\
+  "Test 44 failed"
+$PYTHON $TEST help test4|grep -q "^ *Help for test4" || die "Test 45 failed"
+$PYTHON $TEST help testalias3|grep -q "^ *Help for test4" || die\
+  "Test 46 failed"
 
 # Help for cmds with all_command_help.
-$PYTHON $TEST help|grep -q "test1 *Help for test1" && die "Test 44 failed"
-$PYTHON $TEST help test1|grep -q "Help for test1" || die "Test 45 failed"
-$PYTHON $TEST help|grep -q "test4 *Help for test4" && die "Test 44 failed"
-$PYTHON $TEST help test4|grep -q "Help for test4" || die "Test 45 failed"
+$PYTHON $TEST help|grep -q "Help for test1. As described by a docstring." || die "Test 47 failed"
+$PYTHON $TEST help test1|grep -q "Help for test1. As described by a docstring." || die "Test 48 failed"
+$PYTHON $TEST help|grep -q "test1b short help" || die "Test 49 failed"
+$PYTHON $TEST help test1b|grep -q "test1b short help" && die "Test 50 failed"
+$PYTHON $TEST help|grep -q "is my very favorite test" && die "Test 51 failed"
+$PYTHON $TEST help test1b|grep -q "is my very favorite test" || die "Test 52 failed"
+$PYTHON $TEST help|grep -q "Help for test4." && die "Test 53 failed"
+$PYTHON $TEST help test4|grep -q "Help for test4." || die "Test 54 failed"
+$PYTHON $TEST help|grep -q "replacetest4help" || die "Test 55 failed"
+$PYTHON $TEST help test4|grep -q "replacetest4help" && die "Test 56 failed"
 
 # Success, --hint before command, foo shown with test1
-$PYTHON $TEST --hint 'XYZ' --help|grep -q "following commands:" && die "Test 46 failed"
-$PYTHON $TEST --hint 'XYZ' --help|grep -q "XYZ" && die "Test 47 failed"
-$PYTHON $TEST --hint 'XYZ' --help|grep -q "This tool shows how" || die "Test 48 failed"
-$PYTHON $TEST --hint 'XYZ' help|grep -q "following commands:" || die "Test 49 failed"
-$PYTHON $TEST --hint 'XYZ' help|grep -q "XYZ" && die "Test 50 failed"
-$PYTHON $TEST --hint 'XYZ' help|grep -q "This tool shows how" || die "Test 51 failed"
+$PYTHON $TEST --hint 'XYZ' --help|grep -q "following commands:" && die "Test 57 failed"
+$PYTHON $TEST --hint 'XYZ' --help|grep -q "XYZ" && die "Test 58 failed"
+$PYTHON $TEST --hint 'XYZ' --help|grep -q "This tool shows how" || die "Test 59 failed"
+$PYTHON $TEST --hint 'XYZ' help|grep -q "following commands:" || die "Test 60 failed"
+$PYTHON $TEST --hint 'XYZ' help|grep -q "XYZ" && die "Test 61 failed"
+$PYTHON $TEST --hint 'XYZ' help|grep -q "This tool shows how" || die "Test 62 failed"
 
 # A command name with an letters, numbers, or an underscore is fine
 $PYTHON -c "${IMPORTS}
@@ -232,7 +245,7 @@ def main(argv):
   appcommands.AddCmdFunc('test', test)
   appcommands.AddCmdFunc('test_foo', test)
   appcommands.AddCmdFunc('a123', test)
-appcommands.Run()" test || die "Test 52 failed"
+appcommands.Run()" test || die "Test 63 failed"
 
 # A command name that starts with a non-alphanumeric characters is not ok
 $PYTHON -c "${IMPORTS}
@@ -240,7 +253,7 @@ def test(argv):
   return 0
 def main(argv):
   appcommands.AddCmdFunc('123', test)
-appcommands.Run()" 123 >/dev/null 2>&1 && die "Test 53 failed"
+appcommands.Run()" 123 >/dev/null 2>&1 && die "Test 64 failed"
 
 # A command name that contains other characters is not ok
 $PYTHON -c "${IMPORTS}
@@ -248,7 +261,7 @@ def test(argv):
   return 0
 def main(argv):
   appcommands.AddCmdFunc('test+1', test)
-appcommands.Run()" "test+1" >/dev/null 2>&1 && die "Test 54 failed"
+appcommands.Run()" "test+1" >/dev/null 2>&1 && die "Test 65 failed"
 
 # If a command raises app.UsageError, usage is printed.
 RES=`$PYTHON -c "${IMPORTS}
@@ -257,11 +270,11 @@ def test(argv):
   raise app.UsageError('Ha-ha')
 def main(argv):
   appcommands.AddCmdFunc('test', test)
-appcommands.Run()" test` && die "Test 55 failed"
+appcommands.Run()" test` && die "Test 66 failed"
 
-echo "${RES}" | grep -q "USAGE: " || die "Test 56 failed"
-echo "${RES}" | grep -q -E "(^| )test[ \t]+Help1($| )" || die "Test 57 failed"
-echo "${RES}" | grep -q -E "(^| )Ha-ha($| )" || die "Test 58 failed"
+echo "${RES}" | grep -q "USAGE: " || die "Test 67 failed"
+echo "${RES}" | grep -q -E "(^| )test[ \t]+Help1($| )" || die "Test 68 failed"
+echo "${RES}" | grep -q -E "(^| )Ha-ha($| )" || die "Test 69 failed"
 
 
 $PYTHON -c "${IMPORTS}
@@ -271,7 +284,7 @@ def test(*args, **kwargs):
   return Test(*args, **kwargs)
 def main(argv):
   appcommands.AddCmd('test', test)
-appcommands.Run()" test || die "Test 62 failed"
+appcommands.Run()" test || die "Test 73 failed"
 
 # Success, default command set and correctly run.
 RES=`$PYTHON -c "${IMPORTS}
@@ -282,9 +295,9 @@ class test(appcommands.Cmd):
 def main(argv):
   appcommands.AddCmd('test', test)
 appcommands.SetDefaultCommand('test')
-appcommands.Run()"` || die "Test 63 failed"
+appcommands.Run()"` || die "Test 74 failed"
 
-echo "${RES}" | grep -q "test running correctly" || die "Test 64 failed"
+echo "${RES}" | grep -q "test running correctly" || die "Test 75 failed"
 
 # Failure, default command set but missing.
 $PYTHON -c "${IMPORTS}
@@ -295,6 +308,6 @@ class test(appcommands.Cmd):
 def main(argv):
   appcommands.AddCmd('test', test)
 appcommands.SetDefaultCommand('missing')
-appcommands.Run()" >/dev/null 2>&1 && die "Test 65 failed"
+appcommands.Run()" >/dev/null 2>&1 && die "Test 76 failed"
 
 echo "PASS"

@@ -7,6 +7,7 @@
 
 import datetime
 from google.apputils import basetest
+from google.apputils import datelib
 from google.apputils import humanize
 
 
@@ -71,11 +72,19 @@ class HumanizeTest(basetest.TestCase):
     self.assertEqual('1.15 km', humanize.DecimalPrefix(1150, 'm', precision=3))
     self.assertEqual('-1.15 km', humanize.DecimalPrefix(-1150, 'm',
                                                         precision=3))
+    self.assertEqual('1 k', humanize.DecimalPrefix(1000, ''))
+    self.assertEqual('-10 G', humanize.DecimalPrefix(-10e9, ''))
+    self.assertEqual('12', humanize.DecimalPrefix(12, ''))
+    self.assertEqual('-115', humanize.DecimalPrefix(-115, ''))
+    self.assertEqual('0', humanize.DecimalPrefix(0, ''))
+
     self.assertEqual('1.1 s', humanize.DecimalPrefix(1.12, 's', precision=2))
     self.assertEqual('-1.1 s', humanize.DecimalPrefix(-1.12, 's', precision=2))
     self.assertEqual('nan bps', humanize.DecimalPrefix(float('nan'), 'bps'))
+    self.assertEqual('nan', humanize.DecimalPrefix(float('nan'), ''))
     self.assertEqual('inf bps', humanize.DecimalPrefix(float('inf'), 'bps'))
     self.assertEqual('-inf bps', humanize.DecimalPrefix(float('-inf'), 'bps'))
+    self.assertEqual('-inf', humanize.DecimalPrefix(float('-inf'), ''))
 
     self.assertEqual('-4 mm',
                      humanize.DecimalPrefix(-0.004, 'm', min_scale=None))
@@ -102,16 +111,44 @@ class HumanizeTest(basetest.TestCase):
     self.assertEqual('65536 Yibit', humanize.BinaryPrefix(2**96, 'bit'))
     self.assertEqual('1.25 KiB', humanize.BinaryPrefix(1280, 'B', precision=3))
     self.assertEqual('1.2 KiB', humanize.BinaryPrefix(1280, 'B', precision=2))
+    self.assertEqual('1.2 Ki', humanize.BinaryPrefix(1280, '', precision=2))
+    self.assertEqual('12', humanize.BinaryPrefix(12, '', precision=2))
 
-  def testScale(self):
+    # Test both int and long versions of the same quantity to make sure they are
+    # printed in the same way.
+    self.assertEqual('10.0 QPS', humanize.BinaryPrefix(10, 'QPS', precision=3))
+    self.assertEqual('10.0 QPS', humanize.BinaryPrefix(10L, 'QPS', precision=3))
+
+  def testDecimalScale(self):
+    self.assertIsInstance(humanize.DecimalScale(0, '')[0], float)
+    self.assertIsInstance(humanize.DecimalScale(1, '')[0], float)
     self.assertEqual((12.1, 'km'), humanize.DecimalScale(12100, 'm'))
+    self.assertEqual((12.1, 'k'), humanize.DecimalScale(12100, ''))
+    self.assertEqual((0, ''), humanize.DecimalScale(0, ''))
+    self.assertEqual(
+        (12.1, 'km'),
+        humanize.DecimalScale(12100, 'm', min_scale=0, max_scale=None))
+    self.assertEqual(
+        (12100, 'm'),
+        humanize.DecimalScale(12100, 'm', min_scale=0, max_scale=0))
     self.assertEqual((1.15, 'Mm'), humanize.DecimalScale(1150000, 'm'))
+    self.assertEqual((1, 'm'),
+                     humanize.DecimalScale(1, 'm', min_scale=None))
     self.assertEqual((450, 'mSWE'),
                      humanize.DecimalScale(0.45, 'SWE', min_scale=None))
     self.assertEqual(
         (250, u'µm'),
         humanize.DecimalScale(1.0 / (4 * 1000), 'm', min_scale=None))
+    self.assertEqual(
+        (0.250, 'km'),
+        humanize.DecimalScale(250, 'm', min_scale=1))
+    self.assertEqual(
+        (12000, 'mm'),
+        humanize.DecimalScale(12, 'm', min_scale=None, max_scale=-1))
 
+  def testBinaryScale(self):
+    self.assertIsInstance(humanize.BinaryScale(0, '')[0], float)
+    self.assertIsInstance(humanize.BinaryScale(1, '')[0], float)
     value, unit = humanize.BinaryScale(200000000000, 'B')
     self.assertAlmostEqual(value, 186.26, 2)
     self.assertEqual(unit, 'GiB')
@@ -183,6 +220,48 @@ class HumanizeTest(basetest.TestCase):
     self.assertEqual('4d 10h 5m 12.25s', humanize.TimeDelta(
         datetime.timedelta(days=4, hours=10, minutes=5, seconds=12,
                            microseconds=250000)))
+
+  def testUnixTimestamp(self):
+    self.assertEqual('2013-11-17 11:08:27.723524 PST',
+                     humanize.UnixTimestamp(1384715307.723524,
+                                            datelib.US_PACIFIC))
+    self.assertEqual('2013-11-17 19:08:27.723524 UTC',
+                     humanize.UnixTimestamp(1384715307.723524,
+                                            datelib.UTC))
+
+    # DST part of the timezone should not depend on the current local time,
+    # so this should be in PDT (and different from the PST in the first test).
+    self.assertEqual('2013-05-17 15:47:21.723524 PDT',
+                     humanize.UnixTimestamp(1368830841.723524,
+                                            datelib.US_PACIFIC))
+
+    self.assertEqual('1970-01-01 00:00:00.000000 UTC',
+                     humanize.UnixTimestamp(0, datelib.UTC))
+
+  def testAddOrdinalSuffix(self):
+    self.assertEqual('0th', humanize.AddOrdinalSuffix(0))
+    self.assertEqual('1st', humanize.AddOrdinalSuffix(1))
+    self.assertEqual('2nd', humanize.AddOrdinalSuffix(2))
+    self.assertEqual('3rd', humanize.AddOrdinalSuffix(3))
+    self.assertEqual('4th', humanize.AddOrdinalSuffix(4))
+    self.assertEqual('5th', humanize.AddOrdinalSuffix(5))
+    self.assertEqual('10th', humanize.AddOrdinalSuffix(10))
+    self.assertEqual('11th', humanize.AddOrdinalSuffix(11))
+    self.assertEqual('12th', humanize.AddOrdinalSuffix(12))
+    self.assertEqual('13th', humanize.AddOrdinalSuffix(13))
+    self.assertEqual('14th', humanize.AddOrdinalSuffix(14))
+    self.assertEqual('20th', humanize.AddOrdinalSuffix(20))
+    self.assertEqual('21st', humanize.AddOrdinalSuffix(21))
+    self.assertEqual('22nd', humanize.AddOrdinalSuffix(22))
+    self.assertEqual('23rd', humanize.AddOrdinalSuffix(23))
+    self.assertEqual('24th', humanize.AddOrdinalSuffix(24))
+    self.assertEqual('63rd', humanize.AddOrdinalSuffix(63))
+    self.assertEqual('100000th', humanize.AddOrdinalSuffix(100000))
+    self.assertEqual('100001st', humanize.AddOrdinalSuffix(100001))
+    self.assertEqual('100011th', humanize.AddOrdinalSuffix(100011))
+    self.assertRaises(ValueError, humanize.AddOrdinalSuffix, -1)
+    self.assertRaises(ValueError, humanize.AddOrdinalSuffix, 0.5)
+    self.assertRaises(ValueError, humanize.AddOrdinalSuffix, 123.001)
 
 
 class NaturalSortKeyChunkingTest(basetest.TestCase):

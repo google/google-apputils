@@ -88,18 +88,30 @@ class TimestampUnitTest(basetest.TestCase):
   def testCombine(self):
     for tz in (datelib.UTC, datelib.US_PACIFIC):
       self.assertEqual(
-          datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0, tz),
+          tz.localize(datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0)),
           datelib.Timestamp.combine(
               datelib.datetime.date(1970, 1, 1),
               datelib.datetime.time(0, 0, 0),
               tz))
 
       self.assertEqual(
-          datelib.Timestamp(9998, 12, 31, 23, 59, 59, 999999, tz),
+          tz.localize(datelib.Timestamp(9998, 12, 31, 23, 59, 59, 999999)),
           datelib.Timestamp.combine(
               datelib.datetime.date(9998, 12, 31),
               datelib.datetime.time(23, 59, 59, 999999),
               tz))
+
+  def testStrpTime(self):
+    time_str = '20130829 23:43:19.206'
+    time_fmt = '%Y%m%d %H:%M:%S.%f'
+    expected = datelib.Timestamp(2013, 8, 29, 23, 43, 19, 206000)
+
+    for tz in (datelib.UTC, datelib.US_PACIFIC):
+      if tz == datelib.LocalTimezone:
+        actual = datelib.Timestamp.strptime(time_str, time_fmt)
+      else:
+        actual = datelib.Timestamp.strptime(time_str, time_fmt, tz)
+      self.assertEqual(tz.localize(expected), actual)
 
   def testFromString1(self):
     for string_zero in (
@@ -110,14 +122,15 @@ class TimestampUnitTest(basetest.TestCase):
       for testtz in (datelib.UTC, datelib.US_PACIFIC):
         self.assertEqual(
             datelib.Timestamp.FromString(string_zero, testtz),
-            datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0, testtz))
+            testtz.localize(datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0)))
 
     self.assertEqual(
         datelib.Timestamp.FromString(
             '1970-01-01T00:00:00+0000', datelib.US_PACIFIC),
-        datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0, datelib.UTC))
+        datelib.UTC.localize(datelib.Timestamp(1970, 1, 1, 0, 0, 0, 0)))
 
-    startdate = datelib.Timestamp(2009, 1, 1, 3, 0, 0, 0, datelib.US_PACIFIC)
+    startdate = datelib.US_PACIFIC.localize(
+        datelib.Timestamp(2009, 1, 1, 3, 0, 0, 0))
     for day in xrange(1, 366):
       self.assertEqual(
           datelib.Timestamp.FromString(startdate.isoformat()),

@@ -26,8 +26,11 @@ class ShellScriptTests(basetest.TestCase):
   def RunTestScript(self, script_name):
     tests_path = os.path.dirname(__file__)
     sh_test_path = os.path.realpath(os.path.join(tests_path, script_name))
+    path_with_python = ':'.join((
+        os.path.dirname(sys.executable), os.environ.get('PATH')))
 
     env = {
+        'PATH': path_with_python,
         # Setuptools puts dependency eggs in our path, so propagate that.
         'PYTHONPATH': os.pathsep.join(sys.path),
         'TEST_TMPDIR': FLAGS.test_tmpdir,

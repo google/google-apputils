@@ -22,7 +22,7 @@ from setuptools import setup, find_packages
 from setuptools.command import test
 
 REQUIRE = [
-    "python-dateutil>=1.4,<2",
+    "python-dateutil>=1.4",
     "python-gflags>=1.4",
     "pytz>=2010",
     ]
@@ -50,7 +50,7 @@ class GoogleTestWrapper(test.test, object):
 
 setup(
     name="google-apputils",
-    version="0.4.0",
+    version="0.4.1",
     packages=find_packages(exclude=["tests"]),
     namespace_packages=["google"],
     entry_points={

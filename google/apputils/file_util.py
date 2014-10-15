@@ -133,6 +133,41 @@ def TemporaryFileWithContents(contents, **kw):
   temporary_file.close()
 
 
+# TODO(user): remove after migration to Python 3.2.
+# This context manager can be replaced with tempfile.TemporaryDirectory in
+# Python 3.2 (http://bugs.python.org/issue5178,
+# http://docs.python.org/dev/library/tempfile.html#tempfile.TemporaryDirectory).
+@contextlib.contextmanager
+def TemporaryDirectory(suffix='', prefix='tmp', base_path=None):
+  """A context manager to create a temporary directory and clean up on exit.
+
+  The parameters are the same ones expected by tempfile.mkdtemp.
+  The directory will be securely and atomically created.
+  Everything under it will be removed when exiting the context.
+
+  Args:
+    suffix: optional suffix.
+    prefix: options prefix.
+    base_path: the base path under which to create the temporary directory.
+  Yields:
+    The absolute path of the new temporary directory.
+  """
+  temp_dir_path = tempfile.mkdtemp(suffix, prefix, base_path)
+  try:
+    yield temp_dir_path
+  finally:
+    try:
+      shutil.rmtree(temp_dir_path)
+    except OSError, e:
+      if e.message == 'Cannot call rmtree on a symbolic link':
+        # Interesting synthetic exception made up by shutil.rmtree.
+        # Means we received a symlink from mkdtemp.
+        # Also means must clean up the symlink instead.
+        os.unlink(temp_dir_path)
+      else:
+        raise
+
+
 def MkDirs(directory, force_mode=None):
   """Makes a directory including its parent directories.
 
@@ -164,7 +199,7 @@ def MkDirs(directory, force_mode=None):
 
 
 def RmDirs(dir_name):
-  """Removes dir_name and every non-empty directory in dir_name.
+  """Removes dir_name and every subsequently empty directory above it.
 
   Unlike os.removedirs and shutil.rmtree, this function doesn't raise an error
   if the directory does not exist.
@@ -189,7 +224,7 @@ def RmDirs(dir_name):
 
       parent_directory = os.path.dirname(parent_directory)
   except OSError, err:
-    if err.errno not in (errno.EACCES, errno.ENOTEMPTY):
+    if err.errno not in (errno.EACCES, errno.ENOTEMPTY, errno.EPERM):
       raise
 
 
