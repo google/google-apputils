@@ -1,0 +1,4 @@
+include *.py
+include LICENSE
+include README
+recursive-include google *.py
