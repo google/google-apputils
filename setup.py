@@ -83,5 +83,5 @@ setup(
 
     author="Google Inc.",
     author_email="opensource@google.com",
-    url="http://code.google.com/p/google-apputils-python",
-    )
+    url="https://github.com/google/google-apputils-python",
+)
